@@ -17,6 +17,12 @@ import {
   CORONA_VERTEX_SHADER,
   CORONA_FRAGMENT_SHADER,
 } from './MoonShaders';
+import {
+  SUN_VERTEX_SHADER,
+  SUN_FRAGMENT_SHADER,
+  SUN_CORONA_VERTEX_SHADER,
+  SUN_CORONA_FRAGMENT_SHADER,
+} from './SunShaders';
 import { Camera, Check, ChevronDown, Cloud, Compass, Eye, EyeOff, Globe, Layers, Moon, Share2, Sliders, Sparkles, Star, Sun } from 'lucide-react';
 
 interface Earth3DProps {
@@ -350,6 +356,38 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
+  // Generate fallback 3D Sun Photosphere plasma surface texture
+  const generateFallbackSunTexture = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Golden-white solar plasma base
+    const grad = ctx.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0, '#fef08a');
+    grad.addColorStop(0.5, '#f59e0b');
+    grad.addColorStop(1, '#ea580c');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1024, 512);
+
+    // Convective solar granules & sunspots
+    for (let i = 0; i < 3000; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 512;
+      const r = Math.random() * 3.0 + 0.5;
+      ctx.fillStyle = Math.random() < 0.08 ? 'rgba(124, 45, 18, 0.7)' : 'rgba(255, 255, 255, 0.35)';
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }, []);
+
   // Generate fallback clouds texture (smooth atmospheric cloud bands, NO hard circle bubbles!)
   const generateFallbackCloudsTexture = useCallback(() => {
     const canvas = document.createElement('canvas');
@@ -607,20 +645,38 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
     );
 
-    // 2d. 3D Sun Sphere & Solar Corona in Space
-    const sunGeo = new THREE.SphereGeometry(65.0, 32, 32);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffdf0 });
+    // 2d. Photorealistic 3D Sun Globe & Volumetric Solar Corona Atmosphere
+    const sunGeo = new THREE.SphereGeometry(65.0, 48, 48); // 3D Sun Globe sphere
+    const fallbackSun = generateFallbackSunTexture();
+    const sunMat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_sun_texture: { value: fallbackSun },
+        u_time: { value: 0.0 }
+      },
+      vertexShader: SUN_VERTEX_SHADER,
+      fragmentShader: SUN_FRAGMENT_SHADER
+    });
     const sunMesh = new THREE.Mesh(sunGeo, sunMat);
     scene.add(sunMesh);
     sunMeshRef.current = sunMesh;
 
-    const coronaGeo = new THREE.SphereGeometry(110.0, 32, 32);
+    textureLoader.load(
+      '/textures/sun.jpg',
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = maxAniso;
+        sunMat.uniforms.u_sun_texture.value = tex;
+        sunMat.needsUpdate = true;
+      }
+    );
+
+    const coronaGeo = new THREE.SphereGeometry(105.0, 48, 48);
     const coronaMat = new THREE.ShaderMaterial({
       uniforms: {
         u_time: { value: 0.0 }
       },
-      vertexShader: CORONA_VERTEX_SHADER,
-      fragmentShader: CORONA_FRAGMENT_SHADER,
+      vertexShader: SUN_CORONA_VERTEX_SHADER,
+      fragmentShader: SUN_CORONA_FRAGMENT_SHADER,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
       transparent: true
@@ -709,6 +765,9 @@ export const Earth3D: React.FC<Earth3DProps> = ({
 
       if (coronaMeshRef.current && coronaMeshRef.current.material instanceof THREE.ShaderMaterial) {
         coronaMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+      }
+      if (sunMeshRef.current && sunMeshRef.current.material instanceof THREE.ShaderMaterial) {
+        sunMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
       }
 
       if (stationMarkersRef.current) {

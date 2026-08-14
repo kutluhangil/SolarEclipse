@@ -399,20 +399,42 @@ export function createRealisticStarField(scene: THREE.Scene): {
   bgGeo.setAttribute('color', new THREE.Float32BufferAttribute(bgColors, 3));
 
   const bgMat = new THREE.PointsMaterial({
-    size: 2.2,
+    size: 4.5,
+    map: starSprite,
     vertexColors: true,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.90,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    sizeAttenuation: false,
+    sizeAttenuation: true,
   });
 
   const bgPoints = new THREE.Points(bgGeo, bgMat);
   starGroup.add(bgPoints);
 
   // -------------------------------------------------------------
-  // Layer 3: Faint Milky Way Galactic Core Nebula Cloud (Soft Cosmic Dust)
+  // Layer 0: ESO/NASA 4K Deep Space Milky Way Panorama Sphere
+  // -------------------------------------------------------------
+  const mwGeo = new THREE.SphereGeometry(4500, 64, 64);
+  const textureLoader = new THREE.TextureLoader();
+  const mwMat = new THREE.MeshBasicMaterial({
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false
+  });
+  const mwMesh = new THREE.Mesh(mwGeo, mwMat);
+  mwMesh.rotation.y = Math.PI * 0.45; // Align Galactic Center with J2000
+  starGroup.add(mwMesh);
+
+  textureLoader.load('/textures/milkyway.png', (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mwMat.map = tex;
+    mwMat.needsUpdate = true;
+  });
+
+  // -------------------------------------------------------------
+  // Layer 1: Bright Navigation Star Catalog & Planets
   // -------------------------------------------------------------
   const nebulaPositions: number[] = [];
   const nebulaColors: number[] = [];
