@@ -388,6 +388,45 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
+  // Generate 2D Radial Solar Corona Sprite Texture (Camera-Facing Flare Aura)
+  const generateSolarCoronaSpriteTexture = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    const cx = 256;
+    const cy = 256;
+
+    // Fiery golden-white plasma radial gradient
+    const grad = ctx.createRadialGradient(cx, cy, 30, cx, cy, 250);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+    grad.addColorStop(0.22, 'rgba(254, 240, 138, 0.92)');
+    grad.addColorStop(0.48, 'rgba(245, 158, 11, 0.55)');
+    grad.addColorStop(0.75, 'rgba(239, 68, 68, 0.20)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 250, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Radial coronal streamer rays
+    ctx.strokeStyle = 'rgba(254, 240, 138, 0.18)';
+    ctx.lineWidth = 4;
+    for (let i = 0; i < 48; i++) {
+      const angle = (i / 48) * Math.PI * 2;
+      const len = 140 + Math.random() * 100;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * 50, cy + Math.sin(angle) * 50);
+      ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    return texture;
+  }, []);
+
   // Generate fallback clouds texture (smooth atmospheric cloud bands, NO hard circle bubbles!)
   const generateFallbackCloudsTexture = useCallback(() => {
     const canvas = document.createElement('canvas');
@@ -645,7 +684,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
     );
 
-    // 2d. Photorealistic 3D Sun Globe & Volumetric Solar Corona Atmosphere
+    // 2d. Photorealistic 3D Sun Globe & Camera-Facing Solar Corona Atmosphere
     const sunGeo = new THREE.SphereGeometry(65.0, 48, 48); // 3D Sun Globe sphere
     const fallbackSun = generateFallbackSunTexture();
     const sunMat = new THREE.ShaderMaterial({
@@ -670,20 +709,18 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
     );
 
-    const coronaGeo = new THREE.SphereGeometry(105.0, 48, 48);
-    const coronaMat = new THREE.ShaderMaterial({
-      uniforms: {
-        u_time: { value: 0.0 }
-      },
-      vertexShader: SUN_CORONA_VERTEX_SHADER,
-      fragmentShader: SUN_CORONA_FRAGMENT_SHADER,
-      side: THREE.BackSide,
+    // Camera-Facing Volumetric Solar Corona Sprite (Guarantees NO black hole ring or crescent glitch!)
+    const coronaTexture = generateSolarCoronaSpriteTexture();
+    const coronaSpriteMat = new THREE.SpriteMaterial({
+      map: coronaTexture,
+      transparent: true,
       blending: THREE.AdditiveBlending,
-      transparent: true
+      depthWrite: false
     });
-    const coronaMesh = new THREE.Mesh(coronaGeo, coronaMat);
-    sunMesh.add(coronaMesh);
-    coronaMeshRef.current = coronaMesh;
+    const coronaSprite = new THREE.Sprite(coronaSpriteMat);
+    coronaSprite.scale.set(260.0, 260.0, 1.0);
+    sunMesh.add(coronaSprite);
+    coronaMeshRef.current = coronaSprite as any;
 
     // 2e. 3D Volumetric Umbral & Penumbral Shadow Cones Group
     const shadowConesGroup = new THREE.Group();
@@ -763,11 +800,11 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         cloudsMeshRef.current.rotation.y += 0.00015;
       }
 
-      if (coronaMeshRef.current && coronaMeshRef.current.material instanceof THREE.ShaderMaterial) {
-        coronaMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
-      }
-      if (sunMeshRef.current && sunMeshRef.current.material instanceof THREE.ShaderMaterial) {
-        sunMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+      if (sunMeshRef.current) {
+        sunMeshRef.current.rotation.y += 0.0008; // Rotate 3D Sun photosphere
+        if (sunMeshRef.current.material instanceof THREE.ShaderMaterial) {
+          sunMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+        }
       }
 
       if (stationMarkersRef.current) {
