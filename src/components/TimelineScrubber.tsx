@@ -48,7 +48,7 @@ export const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
 
         {/* 2. Start Time */}
         <span className="text-xs text-slate-300 font-bold whitespace-nowrap tracking-wider shrink-0">
-          {startUTCFormatted} (UTS)
+          {startUTCFormatted} (UTC)
         </span>
 
         {/* 3. Slider Track */}
@@ -69,7 +69,7 @@ export const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
 
         {/* 4. End Time */}
         <span className="text-xs text-slate-300 font-bold whitespace-nowrap tracking-wider shrink-0">
-          {endUTCFormatted} (UTS)
+          {endUTCFormatted} (UTC)
         </span>
 
         {/* 5. Speed Selector (placed immediately to the right of slider/end time) */}
@@ -88,7 +88,7 @@ export const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
 
         {/* 6. Current Time Display (placed immediately to the right of speed selector) */}
         <div className="text-slate-300 font-medium tracking-wider whitespace-nowrap shrink-0 text-xs pl-1 font-mono">
-          <span className="text-white font-bold">{currentUTCFormatted} (UTS)</span>
+          <span className="text-white font-bold">{currentUTCFormatted} (UTC)</span>
         </div>
       </div>
 
@@ -146,7 +146,7 @@ export const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
           </select>
 
           <div className="text-[11px] text-slate-300 font-bold tracking-wider font-mono">
-            {currentUTCFormatted} (UTS)
+            {currentUTCFormatted} (UTC)
           </div>
         </div>
       </div>

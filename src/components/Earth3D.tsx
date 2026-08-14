@@ -1,11 +1,23 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ObservationStation, LatLon } from '../types';
 import { OBSERVATION_STATIONS, UMBRA_PATH_WAYPOINTS } from '../data/eclipseData';
 import { getUmbraPosition, getSubSolarPoint, latLonToVector3 } from '../utils/astronomy';
 import { createRealisticStarField } from '../data/starCatalog';
-import { Compass, Globe, Layers, Eye, EyeOff, Sparkles, Sun, Moon, Sliders, ChevronDown, Check, Info, Star } from 'lucide-react';
+import {
+  EARTH_VERTEX_SHADER,
+  EARTH_FRAGMENT_SHADER,
+  ATMOSPHERE_VERTEX_SHADER,
+  ATMOSPHERE_FRAGMENT_SHADER,
+} from './EarthShaders';
+import {
+  MOON_VERTEX_SHADER,
+  MOON_FRAGMENT_SHADER,
+  CORONA_VERTEX_SHADER,
+  CORONA_FRAGMENT_SHADER,
+} from './MoonShaders';
+import { Camera, Check, ChevronDown, Cloud, Compass, Eye, EyeOff, Globe, Layers, Moon, Share2, Sliders, Sparkles, Star, Sun } from 'lucide-react';
 
 interface Earth3DProps {
   currentTimestamp: number;
@@ -158,6 +170,11 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   // Dynamic Scene Elements
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
   const atmosphereMeshRef = useRef<THREE.Mesh | null>(null);
+  const cloudsMeshRef = useRef<THREE.Mesh | null>(null);
+  const moonMeshRef = useRef<THREE.Mesh | null>(null);
+  const sunMeshRef = useRef<THREE.Mesh | null>(null);
+  const coronaMeshRef = useRef<THREE.Mesh | null>(null);
+  const shadowConesGroupRef = useRef<THREE.Group | null>(null);
   const pathLineRef = useRef<THREE.Line | null>(null);
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
@@ -182,6 +199,10 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showIndigoFilter, setShowIndigoFilter] = useState(true);
   const [showStarCatalog, setShowStarCatalog] = useState(true);
+  const [show3DMoon, setShow3DMoon] = useState(true);
+  const [show3DSun, setShow3DSun] = useState(true);
+  const [show3DClouds, setShow3DClouds] = useState(true);
+  const [showShadowCones, setShowShadowCones] = useState(true);
   const starFieldGroupRef = useRef<THREE.Group | null>(null);
   const updateStarfieldRef = useRef<((time: number) => void) | null>(null);
 
@@ -294,6 +315,72 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
+  // Generate fallback Moon crater surface texture
+  const generateFallbackMoonTexture = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Gray basaltic lunar surface base
+    ctx.fillStyle = '#787d85';
+    ctx.fillRect(0, 0, 1024, 512);
+
+    // Dark lunar maria (basalt plains)
+    ctx.fillStyle = '#4a4e54';
+    ctx.beginPath();
+    ctx.ellipse(350, 200, 180, 100, 0.2, 0, Math.PI * 2); // Mare Imbrium & Serenitatis
+    ctx.ellipse(600, 280, 140, 90, -0.3, 0, Math.PI * 2); // Mare Tranquillitatis
+    ctx.ellipse(250, 320, 110, 80, 0.1, 0, Math.PI * 2); // Oceanus Procellarum
+    ctx.fill();
+
+    // Impact craters with white rims
+    ctx.fillStyle = '#32363b';
+    ctx.strokeStyle = '#c2c7d0';
+    for (let i = 0; i < 250; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 512;
+      const r = Math.random() * 12 + 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, r * 0.25);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }, []);
+
+  // Generate fallback clouds texture
+  const generateFallbackCloudsTexture = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    ctx.clearRect(0, 0, 1024, 512);
+
+    // Swirling white cloud formations
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    for (let i = 0; i < 180; i++) {
+      const x = Math.random() * 1024;
+      const y = Math.random() * 512;
+      const rx = Math.random() * 80 + 20;
+      const ry = Math.random() * 30 + 10;
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }, []);
+
   // Initialize Three.js Scene
   useEffect(() => {
     if (!containerRef.current) return;
@@ -316,7 +403,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     cameraRef.current = camera;
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.LinearToneMapping;
@@ -407,164 +494,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         u_terminator_glow: { value: 0.10 },
         u_umbra_ring_glow: { value: 0.00 }
       },
-      vertexShader: `
-        varying vec3 vNormalWorld;
-        varying vec3 vPositionWorld;
-        varying vec2 vUv;
-
-        void main() {
-          vUv = uv;
-          vNormalWorld = normalize(normalMatrix * normal);
-          // For sphere centered at origin, normalize(position) gives exact unit surface normal vector
-          vPositionWorld = normalize(position);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D u_day_texture;
-        uniform sampler2D u_night_texture;
-        uniform sampler2D u_water_texture;
-        uniform vec3 u_sun_pos;
-        uniform vec3 u_umbra_pos;
-        uniform float u_has_umbra;
-        uniform float u_show_penumbra;
-        uniform float u_show_terminator;
-        uniform float u_umbra_opacity;
-        uniform float u_indigo_tint_strength;
-        uniform float u_contrast;
-        uniform float u_brightness;
-        uniform float u_gamma;
-        uniform float u_saturation;
-        uniform float u_night_brightness;
-        uniform float u_ocean_specular;
-        uniform float u_terminator_glow;
-        uniform float u_umbra_ring_glow;
-
-        varying vec3 vNormalWorld;
-        varying vec3 vPositionWorld;
-        varying vec2 vUv;
-
-        void main() {
-          vec3 dayColor = texture2D(u_day_texture, vUv).rgb;
-          vec3 nightColor = texture2D(u_night_texture, vUv).rgb;
-          float isWater = texture2D(u_water_texture, vUv).r;
-
-          // 1. Crystal Clear Earth Tone (Refined photorealistic balance with manual dat.gui controls)
-          vec3 luma = vec3(dot(dayColor, vec3(0.299, 0.587, 0.114)));
-          dayColor = mix(luma, dayColor, u_saturation);
-          dayColor = pow(dayColor, vec3(u_gamma)) * u_brightness;
-          dayColor = (dayColor - 0.5) * u_contrast + 0.5;
-          dayColor = max(vec3(0.0), dayColor);
-          
-          // Elevate deep oceans to a clear, elegant sapphire-teal balance
-          if (isWater > 0.5) {
-            dayColor = mix(dayColor, dayColor * vec3(0.92, 1.08, 1.25), 0.35);
-          }
-
-          // Soften night texture contrast and enhance city light warmth
-          nightColor = pow(nightColor, vec3(0.80)) * u_night_brightness + vec3(0.015, 0.02, 0.03);
-
-          // 2. Calculate Sun Illumination & Day-Night Terminator
-          vec3 sunDir = normalize(u_sun_pos);
-          float ndotl = dot(vPositionWorld, sunDir);
-          
-          // Smooth, crisp day/night terminator
-          float terminatorWidth = 0.07;
-          float dayFactor = smoothstep(-terminatorWidth, terminatorWidth, ndotl);
-          
-          if (u_show_terminator < 0.5) {
-            dayFactor = 1.0;
-          }
-
-          // Warm atmospheric sunset terminator glow along the day/night boundary
-          float terminatorGlow = smoothstep(-0.10, 0.03, ndotl) * (1.0 - smoothstep(0.0, 0.15, ndotl));
-          vec3 sunsetTint = vec3(0.98, 0.55, 0.25); // refined sunset copper glow
-
-          // 3. Scientifically Accurate Solar Eclipse Shadow (Umbra + Penumbra + Twilight Ring)
-          float shadowDarkness = 0.0;
-          float umbraRingGlow = 0.0;
-          float umbraIndigoFactor = 0.0;
-          
-          if (u_has_umbra > 0.5 && ndotl > -0.15) {
-            vec3 umbraDir = normalize(u_umbra_pos);
-            vec3 toPoint = vPositionWorld - umbraDir;
-            float alongSun = dot(toPoint, sunDir);
-            vec3 perpVec = toPoint - alongSun * sunDir;
-            float distFromAxis = length(perpVec);
-            
-            float umbraRadius = 0.014; // ~100 km pitch-black totality core
-            float penumbraRadius = 0.58; // ~3700 km wide partial eclipse zone
-            
-            if (distFromAxis <= umbraRadius) {
-              // Deep pitch-black totality core (only 1% ambient starlight reaches ground)
-              shadowDarkness = mix(0.992, 0.965, smoothstep(0.0, umbraRadius, distFromAxis));
-              umbraIndigoFactor = 1.0;
-            } else if (distFromAxis < penumbraRadius && u_show_penumbra > 0.5) {
-              // Non-linear scientific solar obscuration curve (proportional to overlapping lunar/solar discs)
-              float t = (distFromAxis - umbraRadius) / (penumbraRadius - umbraRadius);
-              float obscuration = pow(1.0 - clamp(t, 0.0, 1.0), 1.85);
-              shadowDarkness = obscuration * 0.94;
-              // Smooth twilight indigo falloff entering totality zone (90%+ obscuration)
-              umbraIndigoFactor = smoothstep(umbraRadius * 3.8, umbraRadius * 0.4, distFromAxis);
-            }
-            
-            // 360° Umbral Sunset Twilight Halo
-            float ringDistance = abs(distFromAxis - umbraRadius * 1.35);
-            umbraRingGlow = exp(-ringDistance * 85.0) * smoothstep(-0.05, 0.2, ndotl);
-            
-            // Apply configurable umbra opacity to highlight or soften path of totality
-            shadowDarkness *= u_umbra_opacity;
-            umbraIndigoFactor *= u_umbra_opacity;
-
-            // Apply shadow only where sun reaches
-            shadowDarkness *= smoothstep(-0.1, 0.05, ndotl);
-            umbraIndigoFactor *= smoothstep(-0.1, 0.05, ndotl);
-          }
-
-          // 4. Combine day, night, and solar eclipse shadow
-          // Effective daylight reaches surface only where not blocked by Moon's shadow
-          float effectiveSunlight = dayFactor * (1.0 - shadowDarkness);
-          vec3 finalColor = mix(nightColor, dayColor, smoothstep(0.0, 0.12, effectiveSunlight));
-
-          // 5. Deep Indigo Totality Post-Processing Visual Filter
-          // Simulates the dramatic twilight lighting drop and spectral shift during totality
-          if (umbraIndigoFactor > 0.001 && u_indigo_tint_strength > 0.01) {
-            // Authentic astronomical deep indigo/midnight-sapphire spectrum (Chappuis/Rayleigh absorption in umbra)
-            vec3 deepIndigoBase = vec3(0.038, 0.065, 0.195);
-            vec3 midnightCobaltGlint = vec3(0.065, 0.115, 0.320);
-            
-            float surfaceLum = dot(finalColor, vec3(0.299, 0.587, 0.114));
-            vec3 tintedTotalitySurface = mix(
-              deepIndigoBase * (0.35 + surfaceLum * 1.3),
-              midnightCobaltGlint + finalColor * 0.15,
-              clamp(surfaceLum * 1.8, 0.0, 1.0)
-            );
-            
-            finalColor = mix(finalColor, tintedTotalitySurface, umbraIndigoFactor * 0.88 * u_indigo_tint_strength);
-          }
-
-          // Add realistic ocean specular reflection (Sun Glint on water!)
-          if (isWater > 0.5 && effectiveSunlight > 0.02) {
-            vec3 viewDir = normalize(cameraPosition - (vPositionWorld * 100.0));
-            vec3 halfDir = normalize(sunDir + viewDir);
-            float spec = pow(max(0.0, dot(vNormalWorld, halfDir)), 32.0);
-            finalColor += vec3(1.0, 0.92, 0.80) * spec * effectiveSunlight * u_ocean_specular;
-          }
-
-          // Add sunset terminator glow where sunlight is grazing the horizon (Controlled by GUI)
-          if (u_show_terminator > 0.5 && u_terminator_glow > 0.001) {
-            finalColor += sunsetTint * terminatorGlow * (1.0 - shadowDarkness) * u_terminator_glow;
-          }
-
-          // Add 360° Umbral Twilight Ring (Golden Sunset Halo around Totality Core, Controlled by GUI)
-          if (umbraRingGlow > 0.0 && u_umbra_ring_glow > 0.001) {
-            vec3 umbraHaloColor = vec3(0.96, 0.62, 0.15); // Solar Gold corona ring
-            finalColor += umbraHaloColor * umbraRingGlow * u_umbra_ring_glow;
-          }
-
-          gl_FragColor = vec4(finalColor, 1.0);
-        }
-      `
+      vertexShader: EARTH_VERTEX_SHADER,
+      fragmentShader: EARTH_FRAGMENT_SHADER,
     });
 
     const earthMesh = new THREE.Mesh(earthGeo, earthMat);
@@ -619,47 +550,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         u_sun_pos: { value: new THREE.Vector3(1, 0, 0) },
         u_has_umbra: { value: 0.0 }
       },
-      vertexShader: `
-        varying vec3 vNormal;
-        varying vec3 vPositionWorld;
-        void main() {
-          vNormal = normalize(normalMatrix * normal);
-          vec4 worldPos = modelMatrix * vec4(position, 1.0);
-          vPositionWorld = normalize(worldPos.xyz);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 u_umbra_pos;
-        uniform vec3 u_sun_pos;
-        uniform float u_has_umbra;
-        varying vec3 vNormal;
-        varying vec3 vPositionWorld;
-        void main() {
-          float intensity = pow(0.55 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.6);
-          
-          float shadowDarkness = 0.0;
-          if (u_has_umbra > 0.5) {
-            vec3 umbraDir = normalize(u_umbra_pos);
-            vec3 sunDir = normalize(u_sun_pos);
-            vec3 toPoint = vPositionWorld - umbraDir;
-            float alongSun = dot(toPoint, sunDir);
-            vec3 perpVec = toPoint - alongSun * sunDir;
-            float distFromAxis = length(perpVec);
-            
-            float umbraRadius = 0.014;
-            float penumbraRadius = 0.58;
-            if (distFromAxis <= umbraRadius) {
-              shadowDarkness = 0.99;
-            } else if (distFromAxis < penumbraRadius) {
-              float t = (distFromAxis - umbraRadius) / (penumbraRadius - umbraRadius);
-              shadowDarkness = pow(1.0 - clamp(t, 0.0, 1.0), 1.85) * 0.94;
-            }
-          }
-          
-          gl_FragColor = vec4(0.35, 0.65, 0.95, 1.0) * max(0.0, intensity) * 0.85 * (1.0 - shadowDarkness);
-        }
-      `,
+      vertexShader: ATMOSPHERE_VERTEX_SHADER,
+      fragmentShader: ATMOSPHERE_FRAGMENT_SHADER,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
       transparent: true
@@ -667,6 +559,80 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     const atmosphereMesh = new THREE.Mesh(atmosGeo, atmosMat);
     scene.add(atmosphereMesh);
     atmosphereMeshRef.current = atmosphereMesh;
+
+    // 2b. 3D Clouds Sphere Layer (Rotating Cloud Atmosphere)
+    const cloudsGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.007, 64, 64);
+    const fallbackClouds = generateFallbackCloudsTexture();
+    const cloudsMat = new THREE.MeshBasicMaterial({
+      map: fallbackClouds,
+      transparent: true,
+      opacity: 0.38,
+      blending: THREE.AdditiveBlending
+    });
+    const cloudsMesh = new THREE.Mesh(cloudsGeo, cloudsMat);
+    scene.add(cloudsMesh);
+    cloudsMeshRef.current = cloudsMesh;
+
+    textureLoader.load(
+      'https://unpkg.com/three-globe@2.31.1/example/img/fair_clouds_4k.png',
+      (tex) => {
+        tex.anisotropy = maxAniso;
+        cloudsMat.map = tex;
+        cloudsMat.needsUpdate = true;
+      }
+    );
+
+    // 2c. Realistic 3D Moon Object in Space
+    const moonGeo = new THREE.SphereGeometry(18.0, 48, 48); // Prominent 3D lunar sphere
+    const fallbackMoon = generateFallbackMoonTexture();
+    const moonMat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_moon_texture: { value: fallbackMoon },
+        u_sun_pos: { value: new THREE.Vector3(1, 0, 0) }
+      },
+      vertexShader: MOON_VERTEX_SHADER,
+      fragmentShader: MOON_FRAGMENT_SHADER
+    });
+    const moonMesh = new THREE.Mesh(moonGeo, moonMat);
+    scene.add(moonMesh);
+    moonMeshRef.current = moonMesh;
+
+    textureLoader.load(
+      'https://unpkg.com/three-globe@2.31.1/example/img/moon.jpg',
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = maxAniso;
+        moonMat.uniforms.u_moon_texture.value = tex;
+        moonMat.needsUpdate = true;
+      }
+    );
+
+    // 2d. 3D Sun Sphere & Solar Corona in Space
+    const sunGeo = new THREE.SphereGeometry(65.0, 32, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffdf0 });
+    const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+    scene.add(sunMesh);
+    sunMeshRef.current = sunMesh;
+
+    const coronaGeo = new THREE.SphereGeometry(110.0, 32, 32);
+    const coronaMat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_time: { value: 0.0 }
+      },
+      vertexShader: CORONA_VERTEX_SHADER,
+      fragmentShader: CORONA_FRAGMENT_SHADER,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true
+    });
+    const coronaMesh = new THREE.Mesh(coronaGeo, coronaMat);
+    sunMesh.add(coronaMesh);
+    coronaMeshRef.current = coronaMesh;
+
+    // 2e. 3D Volumetric Umbral & Penumbral Shadow Cones Group
+    const shadowConesGroup = new THREE.Group();
+    scene.add(shadowConesGroup);
+    shadowConesGroupRef.current = shadowConesGroup;
 
     // 3. Path of Totality Line (Semantic Solar Gold / Amber accent line)
     // Sample the 3D Geodesic Slerp astronomical trajectory every 15 seconds for a mathematically pristine curve on the sphere
@@ -733,9 +699,17 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         }
       }
 
-      // Animate active Orbital HUD reticle (subtle, clean breathing effect that never hides shadow)
+      // Animate active Orbital HUD reticle & cloud rotation
       const time = Date.now() * 0.003;
       updateStarfieldRef.current?.(time);
+
+      if (cloudsMeshRef.current && show3DClouds) {
+        cloudsMeshRef.current.rotation.y += 0.00015;
+      }
+
+      if (coronaMeshRef.current && coronaMeshRef.current.material instanceof THREE.ShaderMaterial) {
+        coronaMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+      }
 
       if (stationMarkersRef.current) {
         stationMarkersRef.current.children.forEach((group) => {
@@ -789,6 +763,13 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       earthMeshRef.current.material.uniforms.u_umbra_opacity.value = umbraOpacity;
       earthMeshRef.current.material.uniforms.u_indigo_tint_strength.value = showIndigoFilter ? 1.0 : 0.0;
 
+      // 3D Sun Sphere & Corona Position in Space
+      const sun3DPos = latLonToVector3(subSolar.lat, subSolar.lon, EARTH_RADIUS * 7.5);
+      if (sunMeshRef.current) {
+        sunMeshRef.current.position.set(...sun3DPos);
+        sunMeshRef.current.visible = show3DSun;
+      }
+
       const umbraPos = getUmbraPosition(currentTimestamp);
       if (umbraPos) {
         const uVec = latLonToVector3(umbraPos.lat, umbraPos.lon, 1);
@@ -802,12 +783,80 @@ export const Earth3D: React.FC<Earth3DProps> = ({
           mat.uniforms.u_has_umbra.value = 1.0;
           mat.uniforms.u_sun_pos.value.set(...sunVec);
         }
+
+        // 3D Moon Object Position in Space (Placed along Sun -> Umbra vector at distance)
+        const moon3DPos = latLonToVector3(umbraPos.lat, umbraPos.lon, EARTH_RADIUS * 2.2);
+        if (moonMeshRef.current) {
+          moonMeshRef.current.position.set(...moon3DPos);
+          if (moonMeshRef.current.material instanceof THREE.ShaderMaterial) {
+            moonMeshRef.current.material.uniforms.u_sun_pos.value.set(...sunVec);
+          }
+          moonMeshRef.current.visible = show3DMoon;
+        }
+
+        // Rebuild 3D Umbral & Penumbral Shadow Cones
+        if (shadowConesGroupRef.current) {
+          while (shadowConesGroupRef.current.children.length > 0) {
+            const child = shadowConesGroupRef.current.children[0] as any;
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+            shadowConesGroupRef.current.remove(child);
+          }
+
+          if (showShadowCones) {
+            const moonPosVec = new THREE.Vector3(...moon3DPos);
+            const groundPosVec = latLonToVector3(umbraPos.lat, umbraPos.lon, EARTH_RADIUS * 1.002);
+            const groundVec = new THREE.Vector3(...groundPosVec);
+
+            // 1. Umbral Cone (Pitch-Black Cone connecting Moon to Earth Totality point)
+            const coneHeight = moonPosVec.distanceTo(groundVec);
+            const umbraConeGeo = new THREE.ConeGeometry(17.5, coneHeight, 32, 1, true); // tapering cone
+            const umbraConeMat = new THREE.MeshBasicMaterial({
+              color: 0x050508,
+              transparent: true,
+              opacity: 0.85,
+              side: THREE.DoubleSide
+            });
+            const umbraCone = new THREE.Mesh(umbraConeGeo, umbraConeMat);
+
+            // Orient cone along Moon -> Ground vector
+            const midpoint = moonPosVec.clone().add(groundVec).multiplyScalar(0.5);
+            umbraCone.position.copy(midpoint);
+            umbraCone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), groundVec.clone().sub(moonPosVec).normalize());
+            shadowConesGroupRef.current.add(umbraCone);
+
+            // 2. Penumbral Cone (Outer transparent golden widening shadow cone in space)
+            const penumbraConeGeo = new THREE.CylinderGeometry(18.0, 58.0, coneHeight, 32, 1, true);
+            const penumbraConeMat = new THREE.MeshBasicMaterial({
+              color: 0x00f2fe,
+              transparent: true,
+              opacity: 0.12,
+              side: THREE.DoubleSide,
+              blending: THREE.AdditiveBlending
+            });
+            const penumbraCone = new THREE.Mesh(penumbraConeGeo, penumbraConeMat);
+            penumbraCone.position.copy(midpoint);
+            penumbraCone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), groundVec.clone().sub(moonPosVec).normalize());
+            shadowConesGroupRef.current.add(penumbraCone);
+          }
+        }
       } else {
         earthMeshRef.current.material.uniforms.u_has_umbra.value = 0.0;
         if (atmosphereMeshRef.current) {
           (atmosphereMeshRef.current.material as THREE.ShaderMaterial).uniforms.u_has_umbra.value = 0.0;
         }
+        if (moonMeshRef.current) moonMeshRef.current.visible = false;
+        if (shadowConesGroupRef.current) {
+          while (shadowConesGroupRef.current.children.length > 0) {
+            shadowConesGroupRef.current.remove(shadowConesGroupRef.current.children[0]);
+          }
+        }
       }
+    }
+
+    // Update 3D Clouds Visibility
+    if (cloudsMeshRef.current) {
+      cloudsMeshRef.current.visible = show3DClouds;
     }
 
     // Update Sun Light direction
@@ -1065,6 +1114,34 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     }
   };
 
+  // Screenshot capture: renders one frame and saves it as PNG
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureSuccess, setCaptureSuccess] = useState(false);
+
+  const handleScreenshot = useCallback(() => {
+    if (!rendererRef.current) return;
+    setIsCapturing(true);
+
+    // Three.js preserveDrawingBuffer must be true for toBlob to work.
+    // We re-render one frame then capture.
+    if (sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+
+    rendererRef.current.domElement.toBlob((blob) => {
+      setIsCapturing(false);
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `solar-eclipse-2026-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setCaptureSuccess(true);
+      setTimeout(() => setCaptureSuccess(false), 2500);
+    }, 'image/png');
+  }, []);
+
   return (
     <div className="relative w-full h-full min-h-[400px] flex-1 bg-transparent overflow-hidden rounded-xl border border-white/15 shadow-2xl">
       {/* 3D Canvas Container */}
@@ -1127,6 +1204,24 @@ export const Earth3D: React.FC<Earth3DProps> = ({
           title="Fixed European landfall view centered over Spain (Space key shortcut)"
         >
           <span>🇪🇸 Spain View</span>
+        </button>
+
+        {/* Screenshot Button */}
+        <button
+          id="btn-screenshot"
+          onClick={(e) => { e.stopPropagation(); handleScreenshot(); }}
+          disabled={isCapturing}
+          className={`flex items-center gap-1 px-2 py-1 rounded transition-all font-bold uppercase text-[11px] border whitespace-nowrap ${
+            captureSuccess
+              ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/80 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
+              : 'bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border-white/15'
+          }`}
+          title="Capture PNG screenshot of current 3D globe view"
+        >
+          {captureSuccess
+            ? <><Check className="w-3.5 h-3.5 text-emerald-300" /><span className="hidden md:inline">Saved!</span></>
+            : <><Camera className="w-3.5 h-3.5" /><span className="hidden md:inline">Screenshot</span></>
+          }
         </button>
 
         {/* Settings & Layers Dropdown Toggle */}
@@ -1317,6 +1412,58 @@ export const Earth3D: React.FC<Earth3DProps> = ({
                       <span>Realistic Star Catalog</span>
                     </span>
                     {showStarCatalog ? <Eye className="w-3.5 h-3.5 text-amber-300" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+
+                  <button
+                    id="btn-toggle-3d-moon"
+                    onClick={() => setShow3DMoon(!show3DMoon)}
+                    className="px-2.5 py-1.5 rounded flex items-center justify-between transition-all text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-transparent"
+                    title="Realistic 3D Moon model object in space"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Moon className="w-3.5 h-3.5 text-sky-300" />
+                      <span>3D Moon Object</span>
+                    </span>
+                    {show3DMoon ? <Eye className="w-3.5 h-3.5 text-sky-300" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+
+                  <button
+                    id="btn-toggle-shadow-cones"
+                    onClick={() => setShowShadowCones(!showShadowCones)}
+                    className="px-2.5 py-1.5 rounded flex items-center justify-between transition-all text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-transparent"
+                    title="3D Umbral & Penumbral shadow cones connecting Sun, Moon, and Earth"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-cyan-300" />
+                      <span>3D Shadow Cones</span>
+                    </span>
+                    {showShadowCones ? <Eye className="w-3.5 h-3.5 text-cyan-300" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+
+                  <button
+                    id="btn-toggle-3d-clouds"
+                    onClick={() => setShow3DClouds(!show3DClouds)}
+                    className="px-2.5 py-1.5 rounded flex items-center justify-between transition-all text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-transparent"
+                    title="Animated 3D atmospheric cloud layer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Cloud className="w-3.5 h-3.5 text-slate-200" />
+                      <span>3D Atmospheric Clouds</span>
+                    </span>
+                    {show3DClouds ? <Eye className="w-3.5 h-3.5 text-slate-200" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+
+                  <button
+                    id="btn-toggle-3d-sun"
+                    onClick={() => setShow3DSun(!show3DSun)}
+                    className="px-2.5 py-1.5 rounded flex items-center justify-between transition-all text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-transparent"
+                    title="3D Sun sphere & solar corona atmosphere"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Sun className="w-3.5 h-3.5 text-amber-400" />
+                      <span>3D Sun & Solar Corona</span>
+                    </span>
+                    {show3DSun ? <Eye className="w-3.5 h-3.5 text-amber-400" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
                   </button>
                 </div>
               </div>

@@ -1,14 +1,22 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { DEFAULT_START_SECONDS, SIMULATION_START_SECONDS, SIMULATION_END_SECONDS, OBSERVATION_STATIONS } from './data/eclipseData';
-import { ObservationStation, LatLon, TelemetryReadout } from './types';
-import { calculateTelemetry, getUmbraPosition, calculateDistanceKm, getAutoTrackingStation } from './utils/astronomy';
-import { HeaderClocks } from './components/HeaderClocks';
-import { Earth3D } from './components/Earth3D';
-import { TelemetryPanel } from './components/TelemetryPanel';
-import { PathTimelinePanel } from './components/PathTimelinePanel';
-import { TimelineScrubber } from './components/TimelineScrubber';
-import { SkyViewPanel } from './components/SkyViewPanel';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Volume2, VolumeX } from 'lucide-react';
+import { DEFAULT_START_SECONDS, OBSERVATION_STATIONS, SIMULATION_END_SECONDS, SIMULATION_START_SECONDS } from './data/eclipseData';
+import { LatLon, ObservationStation, TelemetryReadout } from './types';
+import { calculateCustomEclipseTimes, calculateDistanceKm, calculateTelemetry, getAutoTrackingStation, getUmbraPosition } from './utils/astronomy';
+import { getAudioEngine } from './utils/audioEngine';
+import { fetchOpenMeteoForecast } from './utils/weatherApi';
 import { AttributionModal } from './components/AttributionModal';
+import { Earth3D } from './components/Earth3D';
+import { EclipsePlannerModal } from './components/EclipsePlannerModal';
+import { HeaderClocks } from './components/HeaderClocks';
+import { ObservationCertificateModal } from './components/ObservationCertificateModal';
+import { PathTimelinePanel } from './components/PathTimelinePanel';
+import { PhotographyGuideModal } from './components/PhotographyGuideModal';
+import { SkyViewPanel } from './components/SkyViewPanel';
+import SolarOracleChat from './components/SolarOracleChat';
+import { TelemetryPanel } from './components/TelemetryPanel';
+import { TimelineScrubber } from './components/TimelineScrubber';
+import { TotalityViewfinderModal } from './components/TotalityViewfinderModal';
 
 export default function App() {
   // Simulation State
@@ -18,6 +26,22 @@ export default function App() {
 
   // Attributions / Info Modal State
   const [isAttributionModalOpen, setIsAttributionModalOpen] = useState<boolean>(false);
+
+  // New Feature Modals State
+  const [isViewfinderOpen, setIsViewfinderOpen] = useState<boolean>(false);
+  const [isPlannerOpen, setIsPlannerOpen] = useState<boolean>(false);
+  const [isPhotoGuideOpen, setIsPhotoGuideOpen] = useState<boolean>(false);
+  const [isCertificateOpen, setIsCertificateOpen] = useState<boolean>(false);
+
+  // AI Oracle Chat State
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+
+  // Audio Engine State
+  const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(false);
+  const audioEngineRef = useRef(getAudioEngine());
+
+  // Weather data cache: stationId → forecast
+  const [weatherData, setWeatherData] = useState<Record<string, any>>({});
 
   // Selection & Camera State
   const [selectedStation, setSelectedStation] = useState<ObservationStation | null>(() => getAutoTrackingStation(DEFAULT_START_SECONDS));
@@ -155,14 +179,7 @@ export default function App() {
         humidityBaselinePercent: humidity,
         solarIrradianceMaxWm2: solarMax
       },
-      eclipseTimes: {
-        startPartial: '16:00:00',
-        startTotality: '17:30:00',
-        peakTotality: '17:31:00',
-        endTotality: '17:32:00',
-        endPartial: '18:50:00',
-        durationSeconds: 120
-      },
+      eclipseTimes: calculateCustomEclipseTimes(coords),
       maxSunAltitude: 20.0,
       isCustom: true
     };
@@ -171,6 +188,13 @@ export default function App() {
     setSelectedStation(newCustomStation);
     setTrackingMode('manual');
     setCameraMode('focused-station');
+
+    // Fetch live weather for custom pin
+    fetchOpenMeteoForecast(coords.lat, coords.lon, 'custom-pin').then((forecast) => {
+      if (forecast) {
+        setWeatherData(prev => ({ ...prev, 'custom-pin': forecast }));
+      }
+    });
   }, []);
 
   const handleSelectStation = useCallback((station: ObservationStation) => {
@@ -182,6 +206,15 @@ export default function App() {
       setSelectedStation(station);
     }
     setCameraMode('focused-station');
+
+    // Fetch live weather for newly selected station
+    if (!station.isCustom && station.id) {
+      fetchOpenMeteoForecast(station.coords.lat, station.coords.lon, station.id).then((forecast) => {
+        if (forecast) {
+          setWeatherData(prev => ({ ...prev, [station.id]: forecast }));
+        }
+      });
+    }
   }, [customStation]);
 
   const handleUserInteract = useCallback(() => {
@@ -228,22 +261,97 @@ export default function App() {
     setCameraResetTrigger((prev) => prev + 1);
   }, [currentTimestamp]);
 
-  // Global Keyboard Shortcut:
-  // - Space bar: Sets camera to fixed Spain zoom-out position
+  // Audio engine: enable/disable on user toggle (must happen after gesture)
+  useEffect(() => {
+    const engine = audioEngineRef.current;
+    if (isSoundEnabled) {
+      engine.init().then(() => engine.enable());
+    } else {
+      engine.disable();
+    }
+  }, [isSoundEnabled]);
+
+  // Audio engine: update phase in real-time
+  useEffect(() => {
+    if (!isSoundEnabled) return;
+    audioEngineRef.current.update(telemetry.obscurationPercentage, telemetry.currentPhase);
+  }, [isSoundEnabled, telemetry.obscurationPercentage, telemetry.currentPhase]);
+
+  // Global Keyboard Shortcuts:
+  // Space      → Play / Pause
+  // ← / →     → Seek -60s / +60s
+  // 1–7        → Select observation station by index
+  // A          → Auto-tracking mode
+  // R          → Reset camera
+  // F          → Fullscreen toggle
+  // S          → Spain Fixed view
+  // ?          → Open attribution info modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) {
         return;
       }
-      if (e.code === 'Space' || e.key === ' ') {
-        e.preventDefault();
-        handleSelectTrackingMode('spain-fixed');
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          setIsPlaying(p => !p);
+          break;
+
+        case 'ArrowLeft':
+          e.preventDefault();
+          setCurrentTimestamp(prev => Math.max(SIMULATION_START_SECONDS, prev - 60));
+          break;
+
+        case 'ArrowRight':
+          e.preventDefault();
+          setCurrentTimestamp(prev => Math.min(SIMULATION_END_SECONDS, prev + 60));
+          break;
+
+        case 'KeyA':
+          handleSelectTrackingMode('auto');
+          break;
+
+        case 'KeyR':
+          handleResetCamera();
+          break;
+
+        case 'KeyS':
+          handleSelectTrackingMode('spain-fixed');
+          break;
+
+        case 'KeyF':
+          if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          } else {
+            document.exitFullscreen().catch(() => {});
+          }
+          break;
+
+        case 'Slash':
+          if (e.shiftKey) setIsAttributionModalOpen(true);
+          break;
+
+        default: {
+          // 1-7: station shortcuts
+          const digit = parseInt(e.key, 10);
+          if (!isNaN(digit) && digit >= 1 && digit <= 7) {
+            const station = OBSERVATION_STATIONS[digit - 1];
+            if (station) {
+              setTrackingMode('manual');
+              setCustomStation(null);
+              setSelectedStation(station);
+              setCameraMode('focused-station');
+            }
+          }
+          break;
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSelectTrackingMode]);
+  }, [handleSelectTrackingMode, handleResetCamera]);
 
   return (
     <div className="flex flex-col w-screen h-screen bg-[#050505] text-slate-100 overflow-hidden font-sans select-none">
@@ -252,6 +360,10 @@ export default function App() {
         currentTimestamp={currentTimestamp}
         onResetCamera={handleResetCamera}
         onOpenInfo={() => setIsAttributionModalOpen(true)}
+        onOpenViewfinder={() => setIsViewfinderOpen(true)}
+        onOpenPlanner={() => setIsPlannerOpen(true)}
+        onOpenPhotoGuide={() => setIsPhotoGuideOpen(true)}
+        onOpenCertificate={() => setIsCertificateOpen(true)}
       />
 
       {/* 2. Main Workspace: 3D Globe + Floating Reference UI Panels */}
@@ -449,6 +561,89 @@ export default function App() {
         isOpen={isAttributionModalOpen}
         onClose={() => setIsAttributionModalOpen(false)}
       />
+
+      {/* 4b. Totality Viewfinder Optical Telescope Modal */}
+      {activeStation && (
+        <TotalityViewfinderModal
+          isOpen={isViewfinderOpen}
+          onClose={() => setIsViewfinderOpen(false)}
+          selectedStation={activeStation}
+          telemetry={telemetry}
+          currentTimestamp={currentTimestamp}
+        />
+      )}
+
+      {/* 4c. Eclipse Chaser Travel Score Planner Modal */}
+      <EclipsePlannerModal
+        isOpen={isPlannerOpen}
+        onClose={() => setIsPlannerOpen(false)}
+        onSelectStation={handleSelectStation}
+      />
+
+      {/* 4d. Solar Photography & Safety Filter Guide Modal */}
+      <PhotographyGuideModal
+        isOpen={isPhotoGuideOpen}
+        onClose={() => setIsPhotoGuideOpen(false)}
+        telemetry={telemetry}
+      />
+
+      {/* 4e. Observation Pass Certificate Exporter Modal */}
+      {activeStation && (
+        <ObservationCertificateModal
+          isOpen={isCertificateOpen}
+          onClose={() => setIsCertificateOpen(false)}
+          selectedStation={activeStation}
+          telemetry={telemetry}
+          currentTimestamp={currentTimestamp}
+        />
+      )}
+
+      {/* 5. Solar Oracle AI Chatbot Panel */}
+      {activeStation && (
+        <SolarOracleChat
+          isOpen={isChatOpen}
+          onClose={() => setIsChatOpen(false)}
+          selectedStation={activeStation}
+          telemetry={telemetry}
+          currentTimestamp={currentTimestamp}
+        />
+      )}
+
+      {/* 6. Floating Action Buttons (AI Oracle + Sound) — bottom right */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 items-end">
+        {/* Sound Toggle */}
+        <button
+          id="btn-sound-toggle"
+          onClick={() => setIsSoundEnabled(p => !p)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-bold tracking-wider uppercase border transition-all shadow-lg ${
+            isSoundEnabled
+              ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+              : 'bg-[#050505]/90 hover:bg-white/10 text-slate-400 hover:text-white border-white/15'
+          }`}
+          title={isSoundEnabled ? 'Mute eclipse ambience audio' : 'Enable eclipse ambience audio (Web Audio)'}
+        >
+          {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          <span className="hidden sm:inline">{isSoundEnabled ? 'Sound On' : 'Sound'}</span>
+        </button>
+
+        {/* Solar Oracle Chat Toggle */}
+        <button
+          id="btn-oracle-toggle"
+          onClick={() => setIsChatOpen(p => !p)}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-mono text-xs font-bold tracking-wider uppercase border transition-all shadow-xl ${
+            isChatOpen
+              ? 'bg-amber-500/30 text-amber-200 border-amber-400/70 shadow-[0_0_20px_rgba(245,158,11,0.4)]'
+              : 'bg-[#050505]/90 hover:bg-amber-500/15 text-slate-300 hover:text-amber-300 border-white/15 hover:border-amber-500/40'
+          }`}
+          title="Open Solar Oracle — Gemini AI eclipse assistant"
+        >
+          <Bot className="w-4 h-4" />
+          <span>Solar Oracle</span>
+          {!isChatOpen && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          )}
+        </button>
+      </div>
     </div>
   );
 }

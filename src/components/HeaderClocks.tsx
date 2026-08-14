@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { RotateCcw, Maximize2, Minimize2, Info } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Award, Camera, Eye, Globe, Info, Maximize2, Minimize2, Navigation, RotateCcw } from 'lucide-react';
+import { getLanguage, setLanguage, SupportedLanguage } from '../utils/i18n';
 
 interface HeaderClocksProps {
   currentTimestamp: number;
   onResetCamera?: () => void;
   onOpenInfo?: () => void;
+  onOpenViewfinder?: () => void;
+  onOpenPlanner?: () => void;
+  onOpenPhotoGuide?: () => void;
+  onOpenCertificate?: () => void;
 }
 
 interface TimeComponent {
@@ -30,8 +35,18 @@ export const HeaderClocks: React.FC<HeaderClocksProps> = ({
   currentTimestamp,
   onResetCamera,
   onOpenInfo,
+  onOpenViewfinder,
+  onOpenPlanner,
+  onOpenPhotoGuide,
+  onOpenCertificate,
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [lang, setLangState] = useState<SupportedLanguage>(getLanguage());
+
+  const handleLangChange = (newLang: SupportedLanguage) => {
+    setLanguage(newLang);
+    setLangState(newLang);
+  };
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -125,8 +140,68 @@ export const HeaderClocks: React.FC<HeaderClocksProps> = ({
         </div>
       </div>
 
-      {/* Right Controls: Info Button, Reset Button and Toggle Fullscreen Button */}
-      <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0">
+      {/* Right Controls: Language Selector & Feature Modals */}
+      <div className="flex items-center justify-end gap-1 sm:gap-2 shrink-0">
+        {/* Language Switcher Dropdown */}
+        <div className="relative flex items-center bg-white/5 border border-white/15 rounded-sm px-1.5 py-0.5 font-mono text-[10px]">
+          <Globe className="w-3 h-3 text-cyan-400 mr-1" />
+          <select
+            value={lang}
+            onChange={(e) => handleLangChange(e.target.value as SupportedLanguage)}
+            className="bg-transparent text-white font-bold cursor-pointer focus:outline-none uppercase"
+          >
+            <option value="TR" className="bg-[#050505] text-white">TR (TR)</option>
+            <option value="EN" className="bg-[#050505] text-white">EN (EN)</option>
+            <option value="ES" className="bg-[#050505] text-white">ES (ES)</option>
+            <option value="IS" className="bg-[#050505] text-white">IS (IS)</option>
+          </select>
+        </div>
+
+        {/* Feature Launchers */}
+        {onOpenViewfinder && (
+          <button
+            onClick={onOpenViewfinder}
+            className="flex items-center gap-1 px-2 py-1 rounded-sm bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 transition-all text-[10px] font-mono font-bold"
+            title="Open Telescopic Solar Viewfinder"
+          >
+            <Eye className="w-3 h-3" />
+            <span className="hidden xl:inline">Telescope</span>
+          </button>
+        )}
+
+        {onOpenPlanner && (
+          <button
+            onClick={onOpenPlanner}
+            className="flex items-center gap-1 px-2 py-1 rounded-sm bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition-all text-[10px] font-mono font-bold"
+            title="Open Eclipse Chaser Travel Planner"
+          >
+            <Navigation className="w-3 h-3" />
+            <span className="hidden xl:inline">Planner</span>
+          </button>
+        )}
+
+        {onOpenPhotoGuide && (
+          <button
+            onClick={onOpenPhotoGuide}
+            className="flex items-center gap-1 px-2 py-1 rounded-sm bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 transition-all text-[10px] font-mono font-bold"
+            title="Open Solar Photography Safety Guide"
+          >
+            <Camera className="w-3 h-3" />
+            <span className="hidden xl:inline">Photo</span>
+          </button>
+        )}
+
+        {onOpenCertificate && (
+          <button
+            onClick={onOpenCertificate}
+            className="flex items-center gap-1 px-2 py-1 rounded-sm bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/40 transition-all text-[10px] font-mono font-bold"
+            title="Generate Observation Pass Certificate"
+          >
+            <Award className="w-3 h-3" />
+            <span className="hidden xl:inline">Pass</span>
+          </button>
+        )}
+
         {onOpenInfo && (
           <button
             onClick={onOpenInfo}

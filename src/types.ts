@@ -103,7 +103,7 @@ export interface CountryTimeInfo {
 
 export interface ChatMessage {
   id: string;
-  sender: 'user' | 'oracle';
+  role: 'user' | 'model';
   text: string;
-  timestamp: string;
+  timestamp: number; // Date.now()
 }

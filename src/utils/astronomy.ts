@@ -562,3 +562,74 @@ export function latLonToVector3(lat: number, lon: number, radius: number): [numb
 
   return [x, y, z];
 }
+
+/**
+ * Helper format function to convert seconds since midnight to HH:MM:SS string format
+ */
+function secondsToHHMMSS(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
+ * Calculate custom eclipse time window for any coordinate based on proximity to Umbra path waypoints.
+ */
+export function calculateCustomEclipseTimes(coords: LatLon): import('../types').EclipseTimeWindow {
+  let partialStart: (typeof UMBRA_PATH_WAYPOINTS)[number] | null = null;
+  let totalityStart: (typeof UMBRA_PATH_WAYPOINTS)[number] | null = null;
+  let totalityEnd: (typeof UMBRA_PATH_WAYPOINTS)[number] | null = null;
+  let partialEnd: (typeof UMBRA_PATH_WAYPOINTS)[number] | null = null;
+  let peakTotality: (typeof UMBRA_PATH_WAYPOINTS)[number] | null = null;
+  let minDistance = Infinity;
+
+  for (const wp of UMBRA_PATH_WAYPOINTS) {
+    const dist = calculateDistanceKm(coords, wp.coords);
+
+    if (dist < 3500) {
+      if (!partialStart) {
+        partialStart = wp;
+      }
+      partialEnd = wp;
+    }
+
+    if (dist < 120) {
+      if (!totalityStart) {
+        totalityStart = wp;
+      }
+      totalityEnd = wp;
+    }
+
+    if (dist < minDistance) {
+      minDistance = dist;
+      peakTotality = wp;
+    }
+  }
+
+  const startPartialStr = partialStart ? secondsToHHMMSS(partialStart.time) : '00:00:00';
+  const endPartialStr = partialEnd ? secondsToHHMMSS(partialEnd.time) : '00:00:00';
+
+  if (!totalityStart || !totalityEnd || minDistance >= 120) {
+    return {
+      startPartial: startPartialStr,
+      startTotality: '00:00:00',
+      peakTotality: '00:00:00',
+      endTotality: '00:00:00',
+      endPartial: endPartialStr,
+      durationSeconds: 0
+    };
+  }
+
+  const durationSeconds = Math.max(0, totalityEnd.time - totalityStart.time);
+
+  return {
+    startPartial: startPartialStr,
+    startTotality: secondsToHHMMSS(totalityStart.time),
+    peakTotality: peakTotality ? secondsToHHMMSS(peakTotality.time) : '00:00:00',
+    endTotality: secondsToHHMMSS(totalityEnd.time),
+    endPartial: endPartialStr,
+    durationSeconds
+  };
+}
+
