@@ -315,7 +315,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
-  // Generate fallback Moon crater surface texture
+  // Generate fallback Moon crater surface texture (photorealistic regolith & maria)
   const generateFallbackMoonTexture = useCallback(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
@@ -323,29 +323,25 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     const ctx = canvas.getContext('2d')!;
 
     // Gray basaltic lunar surface base
-    ctx.fillStyle = '#787d85';
+    ctx.fillStyle = '#8a8f98';
     ctx.fillRect(0, 0, 1024, 512);
 
-    // Dark lunar maria (basalt plains)
-    ctx.fillStyle = '#4a4e54';
+    // Dark lunar maria (basalt plains: Oceanus Procellarum, Mare Imbrium, etc.)
+    ctx.fillStyle = '#545860';
     ctx.beginPath();
-    ctx.ellipse(350, 200, 180, 100, 0.2, 0, Math.PI * 2); // Mare Imbrium & Serenitatis
-    ctx.ellipse(600, 280, 140, 90, -0.3, 0, Math.PI * 2); // Mare Tranquillitatis
-    ctx.ellipse(250, 320, 110, 80, 0.1, 0, Math.PI * 2); // Oceanus Procellarum
+    ctx.ellipse(350, 200, 180, 100, 0.2, 0, Math.PI * 2);
+    ctx.ellipse(600, 280, 140, 90, -0.3, 0, Math.PI * 2);
+    ctx.ellipse(250, 320, 110, 80, 0.1, 0, Math.PI * 2);
+    ctx.ellipse(750, 210, 90, 70, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Impact craters with white rims
-    ctx.fillStyle = '#32363b';
-    ctx.strokeStyle = '#c2c7d0';
-    for (let i = 0; i < 250; i++) {
+    // Fine, subtle regolith noise stippling (NO cartoon black stroke rings!)
+    for (let i = 0; i < 4000; i++) {
       const x = Math.random() * 1024;
       const y = Math.random() * 512;
-      const r = Math.random() * 12 + 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, r * 0.25);
-      ctx.stroke();
+      const gray = Math.floor(Math.random() * 40 + 130);
+      ctx.fillStyle = `rgba(${gray}, ${gray}, ${gray}, 0.25)`;
+      ctx.fillRect(x, y, 1.5, 1.5);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -354,7 +350,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
-  // Generate fallback clouds texture
+  // Generate fallback clouds texture (smooth atmospheric cloud bands, NO hard circle bubbles!)
   const generateFallbackCloudsTexture = useCallback(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
@@ -363,15 +359,18 @@ export const Earth3D: React.FC<Earth3DProps> = ({
 
     ctx.clearRect(0, 0, 1024, 512);
 
-    // Swirling white cloud formations
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    for (let i = 0; i < 180; i++) {
+    // Smooth soft atmospheric cloud bands with radial gradients
+    for (let i = 0; i < 90; i++) {
       const x = Math.random() * 1024;
       const y = Math.random() * 512;
-      const rx = Math.random() * 80 + 20;
-      const ry = Math.random() * 30 + 10;
+      const r = Math.random() * 120 + 40;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+      grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.08)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -502,13 +501,13 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     scene.add(earthMesh);
     earthMeshRef.current = earthMesh;
 
-    // Asynchronously load high-res NASA Blue Marble, Earth at Night & Specular Water CDN textures
+    // Asynchronously load local high-res NASA Blue Marble, Earth at Night & Specular Water maps
     const textureLoader = new THREE.TextureLoader();
     textureLoader.crossOrigin = 'anonymous';
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
     
     textureLoader.load(
-      'https://unpkg.com/three-globe@2.31.1/example/img/earth-blue-marble.jpg',
+      '/textures/earth-blue-marble.jpg',
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = maxAniso;
@@ -520,7 +519,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     );
 
     textureLoader.load(
-      'https://unpkg.com/three-globe@2.31.1/example/img/earth-night.jpg',
+      '/textures/earth-night.jpg',
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = maxAniso;
@@ -532,7 +531,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     );
 
     textureLoader.load(
-      'https://unpkg.com/three-globe@2.31.1/example/img/earth-water.png',
+      '/textures/earth-water.png',
       (tex) => {
         tex.anisotropy = maxAniso;
         tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -560,21 +559,22 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     scene.add(atmosphereMesh);
     atmosphereMeshRef.current = atmosphereMesh;
 
-    // 2b. 3D Clouds Sphere Layer (Rotating Cloud Atmosphere)
+    // 2b. 3D Clouds Sphere Layer (Rotating Atmospheric Clouds)
     const cloudsGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.007, 64, 64);
     const fallbackClouds = generateFallbackCloudsTexture();
     const cloudsMat = new THREE.MeshBasicMaterial({
       map: fallbackClouds,
       transparent: true,
-      opacity: 0.38,
-      blending: THREE.AdditiveBlending
+      opacity: 0.22,
+      depthWrite: false,
+      blending: THREE.NormalBlending
     });
     const cloudsMesh = new THREE.Mesh(cloudsGeo, cloudsMat);
     scene.add(cloudsMesh);
     cloudsMeshRef.current = cloudsMesh;
 
     textureLoader.load(
-      'https://unpkg.com/three-globe@2.31.1/example/img/fair_clouds_4k.png',
+      '/textures/fair_clouds_4k.png',
       (tex) => {
         tex.anisotropy = maxAniso;
         cloudsMat.map = tex;
@@ -582,7 +582,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
     );
 
-    // 2c. Realistic 3D Moon Object in Space
+    // 2c. Photorealistic 3D Moon Object in Space
     const moonGeo = new THREE.SphereGeometry(18.0, 48, 48); // Prominent 3D lunar sphere
     const fallbackMoon = generateFallbackMoonTexture();
     const moonMat = new THREE.ShaderMaterial({
@@ -598,7 +598,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     moonMeshRef.current = moonMesh;
 
     textureLoader.load(
-      'https://unpkg.com/three-globe@2.31.1/example/img/moon.jpg',
+      '/textures/moon.jpg',
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = maxAniso;
@@ -808,13 +808,14 @@ export const Earth3D: React.FC<Earth3DProps> = ({
             const groundPosVec = latLonToVector3(umbraPos.lat, umbraPos.lon, EARTH_RADIUS * 1.002);
             const groundVec = new THREE.Vector3(...groundPosVec);
 
-            // 1. Umbral Cone (Pitch-Black Cone connecting Moon to Earth Totality point)
+            // 1. Umbral Cone (Soft volumetric converging shadow beam connecting Moon to Earth Totality point)
             const coneHeight = moonPosVec.distanceTo(groundVec);
             const umbraConeGeo = new THREE.ConeGeometry(17.5, coneHeight, 32, 1, true); // tapering cone
             const umbraConeMat = new THREE.MeshBasicMaterial({
-              color: 0x050508,
+              color: 0x03050b,
               transparent: true,
-              opacity: 0.85,
+              opacity: 0.28,
+              depthWrite: false,
               side: THREE.DoubleSide
             });
             const umbraCone = new THREE.Mesh(umbraConeGeo, umbraConeMat);
@@ -825,12 +826,13 @@ export const Earth3D: React.FC<Earth3DProps> = ({
             umbraCone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), groundVec.clone().sub(moonPosVec).normalize());
             shadowConesGroupRef.current.add(umbraCone);
 
-            // 2. Penumbral Cone (Outer transparent golden widening shadow cone in space)
-            const penumbraConeGeo = new THREE.CylinderGeometry(18.0, 58.0, coneHeight, 32, 1, true);
+            // 2. Penumbral Cone (Soft translucent cyan-gold expanding light shadow beam in space)
+            const penumbraConeGeo = new THREE.CylinderGeometry(18.0, 56.0, coneHeight, 32, 1, true);
             const penumbraConeMat = new THREE.MeshBasicMaterial({
-              color: 0x00f2fe,
+              color: 0x38bdf8,
               transparent: true,
-              opacity: 0.12,
+              opacity: 0.05,
+              depthWrite: false,
               side: THREE.DoubleSide,
               blending: THREE.AdditiveBlending
             });

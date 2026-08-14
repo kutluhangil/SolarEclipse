@@ -1,5 +1,5 @@
 /**
- * GLSL Shaders for 3D Moon surface and 3D Solar Corona
+ * GLSL Shaders for Photorealistic 3D Moon surface and 3D Solar Corona
  */
 
 export const MOON_VERTEX_SHADER = `
@@ -25,18 +25,21 @@ export const MOON_FRAGMENT_SHADER = `
   void main() {
     vec3 moonTex = texture2D(u_moon_texture, vUv).rgb;
 
-    // Direct sunlight illumination on lunar surface
+    // Enhance lunar regolith contrast & detail
+    moonTex = pow(moonTex, vec3(1.1)) * 1.15;
+
+    // Directional solar illumination
     vec3 sunDir = normalize(u_sun_pos);
     float ndotl = dot(vNormalWorld, sunDir);
 
-    // Soft day-night terminator on lunar surface
-    float dayFactor = smoothstep(-0.05, 0.10, ndotl);
+    // Crisp lunar day/night terminator (Moon has no atmosphere)
+    float dayFactor = smoothstep(-0.02, 0.06, ndotl);
 
-    // Ambient starlight reflection on night side of Moon (earthshine / space glow)
-    vec3 ambient = vec3(0.04, 0.05, 0.07);
+    // Subtle Earthshine starlight on the night side of the Moon
+    vec3 earthshine = vec3(0.03, 0.045, 0.065);
 
-    // Combined lunar surface lighting
-    vec3 finalColor = mix(moonTex * ambient, moonTex * vec3(1.1, 1.08, 1.02), dayFactor);
+    // Combined photorealistic lunar surface color
+    vec3 finalColor = mix(moonTex * earthshine, moonTex * vec3(1.15, 1.12, 1.08), dayFactor);
 
     gl_FragColor = vec4(finalColor, 1.0);
   }
@@ -58,15 +61,13 @@ export const CORONA_FRAGMENT_SHADER = `
   varying vec2 vUv;
 
   void main() {
-    // Dynamic solar atmospheric pulse
     float rim = 1.0 - max(0.0, dot(vNormal, vec3(0.0, 0.0, 1.0)));
-    float coronaGlow = pow(rim, 2.2);
+    float coronaGlow = pow(rim, 2.6);
 
-    // Solar flare ray distortion effect
-    float noise = sin(vUv.x * 30.0 + u_time * 2.0) * cos(vUv.y * 30.0 + u_time * 1.5) * 0.15 + 0.85;
+    float noise = sin(vUv.x * 24.0 + u_time * 1.5) * cos(vUv.y * 24.0 + u_time * 1.2) * 0.12 + 0.88;
 
-    vec3 coronaColor = vec3(1.0, 0.82, 0.45) * coronaGlow * noise * 2.2;
-    float alpha = clamp(coronaGlow * 0.85, 0.0, 1.0);
+    vec3 coronaColor = vec3(1.0, 0.85, 0.50) * coronaGlow * noise * 2.0;
+    float alpha = clamp(coronaGlow * 0.75, 0.0, 1.0);
 
     gl_FragColor = vec4(coronaColor, alpha);
   }
