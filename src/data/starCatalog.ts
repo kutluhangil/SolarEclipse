@@ -234,6 +234,86 @@ export function generateStarSpriteTexture(): THREE.CanvasTexture {
 }
 
 /**
+ * Custom ShaderMaterial for stars. 
+ * Incorporates relativistic light deflection (Eddington Effect) during totality.
+ */
+const StarVertexShader = `
+attribute vec3 color;
+attribute float size;
+varying vec3 vColor;
+uniform float uTime;
+uniform vec3 uSunPos;
+uniform float uDeflectionStrength;
+
+void main() {
+  vColor = color;
+  
+  // Base position
+  vec3 pos = position;
+  
+  // --- Relativistic Star Deflection (Eddington Effect) ---
+  // If the star is very close to the sun's line of sight, its apparent position shifts outward.
+  vec3 sunDir = normalize(uSunPos);
+  vec3 starDir = normalize(pos);
+  float dotSun = dot(sunDir, starDir);
+  
+  // Only deflect stars that are behind/near the sun (dot product close to 1)
+  if (dotSun > 0.98 && dotSun < 0.9999) {
+    // Angular distance from sun center
+    float theta = acos(dotSun);
+    // Deflection is inversely proportional to angular distance (simplified Einstein formula for visual effect)
+    float deflectionAngle = (0.005 / theta) * uDeflectionStrength;
+    
+    // Calculate the outward vector (away from sun) on the sphere surface
+    vec3 outwardDir = normalize(starDir - sunDir * dotSun);
+    
+    // Apply deflection
+    vec3 deflectedDir = normalize(starDir + outwardDir * deflectionAngle);
+    pos = deflectedDir * length(position);
+  }
+  
+  vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+  
+  // Size attenuation
+  gl_PointSize = size * (300.0 / -mvPosition.z);
+  gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+const StarFragmentShader = `
+uniform sampler2D map;
+varying vec3 vColor;
+uniform float uOpacity;
+
+void main() {
+  vec4 texColor = texture2D(map, gl_PointCoord);
+  if (texColor.a < 0.05) discard;
+  
+  gl_FragColor = vec4(vColor * texColor.rgb, texColor.a * uOpacity);
+  
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+
+function createStarShaderMaterial(sprite: THREE.Texture, opacity: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: StarVertexShader,
+    fragmentShader: StarFragmentShader,
+    uniforms: {
+      map: { value: sprite },
+      uTime: { value: 0.0 },
+      uSunPos: { value: new THREE.Vector3(0, 0, 0) },
+      uDeflectionStrength: { value: 0.0 }, // 0 = no deflection, 1 = full relativistic effect
+      uOpacity: { value: opacity }
+    },
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+}
+
+/**
  * Builds a realistic, multi-depth star field:
  * 1. Bright catalog stars (accurate RA/Dec, colors, magnitudes, and real distance mapping)
  * 2. Solar system planets (Venus, Jupiter, Mercury, Mars, Saturn)
@@ -242,7 +322,7 @@ export function generateStarSpriteTexture(): THREE.CanvasTexture {
  */
 export function createRealisticStarField(scene: THREE.Scene): {
   starGroup: THREE.Group;
-  updateStarfield: (time: number) => void;
+  updateStarfield: (time: number, sunPos?: THREE.Vector3, eclipsePhase?: number) => void;
 } {
   const starGroup = new THREE.Group();
   starGroup.name = 'RealisticStarField';
@@ -271,7 +351,7 @@ export function createRealisticStarField(scene: THREE.Scene): {
 
     // Size calculation (clamped between 6px and 22px)
     const size = Math.max(6.0, Math.min(24.0, 16.0 * Math.sqrt(flux)));
-    brightSizes.push(size);
+    brightSizes.push(size * 1.2); // slight boost for shader material rendering
   });
 
   // Add Planets to bright layer
@@ -285,23 +365,15 @@ export function createRealisticStarField(scene: THREE.Scene): {
 
     // Venus is exceptionally brilliant (mag -4.0)
     const size = planet.name === 'Venus' ? 26.0 : 18.0;
-    brightSizes.push(size);
+    brightSizes.push(size * 1.2);
   });
 
   const brightGeo = new THREE.BufferGeometry();
   brightGeo.setAttribute('position', new THREE.Float32BufferAttribute(brightPositions, 3));
   brightGeo.setAttribute('color', new THREE.Float32BufferAttribute(brightColors, 3));
+  brightGeo.setAttribute('size', new THREE.Float32BufferAttribute(brightSizes, 1));
 
-  const brightMat = new THREE.PointsMaterial({
-    size: 14.0,
-    map: starSprite,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.95,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    sizeAttenuation: false,
-  });
+  const brightMat = createStarShaderMaterial(starSprite, 0.95);
 
   const brightPoints = new THREE.Points(brightGeo, brightMat);
   starGroup.add(brightPoints);
@@ -312,6 +384,7 @@ export function createRealisticStarField(scene: THREE.Scene): {
   // -------------------------------------------------------------
   const bgPositions: number[] = [];
   const bgColors: number[] = [];
+  const bgSizes: number[] = [];
 
   const spectralPalette = [
     new THREE.Color(SPECTRAL_COLORS.O),
@@ -392,22 +465,15 @@ export function createRealisticStarField(scene: THREE.Scene): {
     // Modulate subtle flux dimming
     const dim = 0.4 + random() * 0.55;
     bgColors.push(col.r * dim, col.g * dim, col.b * dim);
+    bgSizes.push(4.5 + random() * 2.0);
   }
 
   const bgGeo = new THREE.BufferGeometry();
   bgGeo.setAttribute('position', new THREE.Float32BufferAttribute(bgPositions, 3));
   bgGeo.setAttribute('color', new THREE.Float32BufferAttribute(bgColors, 3));
+  bgGeo.setAttribute('size', new THREE.Float32BufferAttribute(bgSizes, 1));
 
-  const bgMat = new THREE.PointsMaterial({
-    size: 4.5,
-    map: starSprite,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.90,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    sizeAttenuation: true,
-  });
+  const bgMat = createStarShaderMaterial(starSprite, 0.90);
 
   const bgPoints = new THREE.Points(bgGeo, bgMat);
   starGroup.add(bgPoints);
@@ -438,6 +504,7 @@ export function createRealisticStarField(scene: THREE.Scene): {
   // -------------------------------------------------------------
   const nebulaPositions: number[] = [];
   const nebulaColors: number[] = [];
+  const nebulaSizes: number[] = [];
 
   for (let i = 0; i < 600; i++) {
     const radius = 3200 + random() * 800;
@@ -454,33 +521,37 @@ export function createRealisticStarField(scene: THREE.Scene): {
 
     nebulaPositions.push(v.x, v.y, v.z);
     nebulaColors.push(0.12, 0.18, 0.35); // Deep cyan/indigo interstellar glow
+    nebulaSizes.push(16.0 + random() * 8.0);
   }
 
   const nebulaGeo = new THREE.BufferGeometry();
   nebulaGeo.setAttribute('position', new THREE.Float32BufferAttribute(nebulaPositions, 3));
   nebulaGeo.setAttribute('color', new THREE.Float32BufferAttribute(nebulaColors, 3));
+  nebulaGeo.setAttribute('size', new THREE.Float32BufferAttribute(nebulaSizes, 1));
 
-  const nebulaMat = new THREE.PointsMaterial({
-    size: 16.0,
-    map: starSprite,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.22,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    sizeAttenuation: false,
-  });
+  const nebulaMat = createStarShaderMaterial(starSprite, 0.22);
 
   const nebulaPoints = new THREE.Points(nebulaGeo, nebulaMat);
   starGroup.add(nebulaPoints);
 
   scene.add(starGroup);
 
-  // Animation / Twinkle update function
-  const updateStarfield = (time: number) => {
+  // Animation / Twinkle / Eddington update function
+  const updateStarfield = (time: number, sunPos?: THREE.Vector3, eclipsePhase: number = 0.0) => {
     // Gentle twinkling on bright points
     const twinkle = 0.92 + Math.sin(time * 2.5) * 0.08;
-    brightMat.opacity = 0.92 * twinkle;
+    brightMat.uniforms.uOpacity.value = 0.95 * twinkle;
+    
+    // Update shaders
+    const mats = [brightMat, bgMat, nebulaMat];
+    mats.forEach(mat => {
+      mat.uniforms.uTime.value = time;
+      if (sunPos) {
+        mat.uniforms.uSunPos.value.copy(sunPos);
+        // Exaggerated relativistic deflection for visual wow-factor when in totality
+        mat.uniforms.uDeflectionStrength.value = eclipsePhase > 0.8 ? (eclipsePhase - 0.8) * 5.0 : 0.0;
+      }
+    });
   };
 
   return { starGroup, updateStarfield };

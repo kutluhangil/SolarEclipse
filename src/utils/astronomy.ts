@@ -1,5 +1,6 @@
 import { LatLon, TelemetryReadout, CountryTimeInfo, ObservationStation, LiveMeteorology } from '../types';
 import { UMBRA_PATH_WAYPOINTS, COUNTRY_TIMEZONE_CONFIG, OBSERVATION_STATIONS } from '../data/eclipseData';
+import { Astronomy, Observer, MakeTime } from 'astronomy-engine';
 
 /**
  * Calculate dynamic live meteorological conditions and temperature drop projections
@@ -274,78 +275,42 @@ export function calculateDistanceKm(coord1: LatLon, coord2: LatLon): number {
 }
 
 /**
- * Calculate Sub-Solar Point (where the sun is overhead) for August 12, 2026
+ * Calculate Sub-Solar Point (where the sun is overhead) using VSOP87 high-precision ephemerides.
  */
 export function getSubSolarPoint(timeSeconds: number): LatLon {
-  // On Aug 12, Sun declination is approx +14.85 degrees North
-  const declination = 14.85;
-  // Longitude progresses westward at 15 degrees per hour.
-  // At 12:00 UTC (43200s), sub-solar longitude is around 0° (Greenwich meridian equation of time adjustment ~ -5m -> ~ +1.2° E)
-  const hoursSinceNoon = (timeSeconds - 43200) / 3600;
-  let lon = -1 * (hoursSinceNoon * 15) + 1.2;
-  if (lon < -180) lon += 360;
-  if (lon > 180) lon -= 360;
-  return { lat: declination, lon };
+  // Convert UTC seconds since midnight to JS Date for Aug 12, 2026
+  const date = new Date(Date.UTC(2026, 7, 12, 0, 0, timeSeconds));
+  const time = MakeTime(date);
+  
+  // Get Sun's geocentric equatorial coordinates using VSOP87
+  const sunEqu = Astronomy.Equator('Sun', time, undefined, true, true);
+  
+  // Declination is simply the latitude of the sub-solar point
+  const lat = sunEqu.dec;
+  
+  // For longitude, we subtract Greenwich Mean Sidereal Time (GMST) from Right Ascension
+  const gmst = Astronomy.SiderealTime(time); // in hours
+  let lon = sunEqu.ra * 15 - gmst * 15;
+  
+  // Normalize longitude to -180..180
+  while (lon > 180) lon -= 360;
+  while (lon < -180) lon += 360;
+
+  return { lat, lon };
 }
 
 /**
- * Calculate Sun Altitude (elevation above horizon in degrees) for August 12, 2026
- * using the standard NOAA Solar Calculator / Jean Meeus Astronomical Algorithms.
- * Computes exact fractional year, equation of time (-5.35 min), daily solar declination (+15.13°),
- * hour angle, and atmospheric refraction correction for precise low-horizon observation.
+ * Calculate Sun Altitude (elevation above horizon in degrees) using astronomy-engine (VSOP87).
+ * Computes exact refraction-corrected horizontal coordinates.
  */
 export function calculateSunAltitude(coords: LatLon, timeSeconds: number): number {
-  const rad = Math.PI / 180;
-  const deg = 180 / Math.PI;
-
-  const hours = timeSeconds / 3600;
-  // August 12 is Day 224 of the year 2026
-  const dayOfYear = 224;
-  const fractionalYear = (2 * Math.PI / 365) * (dayOfYear - 1 + (hours - 12) / 24);
-
-  // NOAA Equation of Time in minutes
-  const eqtime = 229.18 * (
-    0.000075 + 
-    0.001868 * Math.cos(fractionalYear) - 
-    0.032077 * Math.sin(fractionalYear) - 
-    0.014615 * Math.cos(2 * fractionalYear) - 
-    0.040849 * Math.sin(2 * fractionalYear)
-  );
-
-  // Solar Declination in radians (approx +15.13° on Aug 12, 2026)
-  const declRad = 0.006918 - 
-    0.399912 * Math.cos(fractionalYear) + 
-    0.070257 * Math.sin(fractionalYear) - 
-    0.006758 * Math.cos(2 * fractionalYear) + 
-    0.000907 * Math.sin(2 * fractionalYear) - 
-    0.002697 * Math.cos(3 * fractionalYear) + 
-    0.00148 * Math.sin(3 * fractionalYear);
-
-  // Solar Time Offset in minutes: 4 minutes per degree longitude
-  const timeOffsetMin = eqtime + 4 * coords.lon;
-  const trueSolarTimeMin = (hours * 60 + timeOffsetMin + 1440) % 1440;
-
-  // Hour Angle in radians (-180° to +180°)
-  let haDeg = trueSolarTimeMin / 4 - 180;
-  if (haDeg < -180) haDeg += 360;
-  if (haDeg > 180) haDeg -= 360;
-  const haRad = haDeg * rad;
-
-  const latRad = coords.lat * rad;
-
-  // Geometric zenith angle and elevation
-  const csz = Math.sin(latRad) * Math.sin(declRad) + Math.cos(latRad) * Math.cos(declRad) * Math.cos(haRad);
-  const trueAltDeg = Math.asin(Math.max(-1, Math.min(1, csz))) * deg;
-
-  // Atmospheric refraction correction for true visual horizon alignment (Bennett's formula)
-  let apparentAlt = trueAltDeg;
-  if (trueAltDeg > -1.0) {
-    const h = Math.max(-0.5, trueAltDeg);
-    const rMinutes = 1.02 / Math.tan((h + 10.3 / (h + 5.11)) * rad);
-    apparentAlt = trueAltDeg + rMinutes / 60.0;
-  }
-
-  return Math.round(apparentAlt * 10) / 10;
+  const date = new Date(Date.UTC(2026, 7, 12, 0, 0, timeSeconds));
+  const time = MakeTime(date);
+  const observer = new Observer(coords.lat, coords.lon, 0); // Elevation 0m
+  
+  // Calculate apparent horizontal coordinates (includes atmospheric refraction)
+  const hor = Astronomy.Horizon(time, observer, 'Sun', 'normal');
+  return Math.round(hor.altitude * 10) / 10;
 }
 
 /**

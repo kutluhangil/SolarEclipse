@@ -5,6 +5,7 @@ import { ObservationStation, LatLon } from '../types';
 import { OBSERVATION_STATIONS, UMBRA_PATH_WAYPOINTS } from '../data/eclipseData';
 import { getUmbraPosition, getSubSolarPoint, latLonToVector3 } from '../utils/astronomy';
 import { createRealisticStarField } from '../data/starCatalog';
+import { createSkyMaterial } from './SkyShaders';
 import {
   EARTH_VERTEX_SHADER,
   EARTH_FRAGMENT_SHADER,
@@ -181,6 +182,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   const cloudsMeshRef = useRef<THREE.Mesh | null>(null);
   const moonMeshRef = useRef<THREE.Mesh | null>(null);
   const sunMeshRef = useRef<THREE.Mesh | null>(null);
+  const skyMatRef = useRef<THREE.ShaderMaterial | null>(null);
   const coronaMeshRef = useRef<THREE.Mesh | null>(null);
   const sunInnerCoronaRef = useRef<THREE.Mesh | null>(null);
   const sunOuterCoronaRef = useRef<THREE.Mesh | null>(null);
@@ -541,8 +543,15 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     const height = containerRef.current.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x02040a);
+    scene.background = new THREE.Color(0x000000); // Black background, sky dome renders on top
     sceneRef.current = scene;
+
+    // Physical Sky Dome (Atmospheric Scattering)
+    const skyGeo = new THREE.SphereGeometry(4800, 32, 15);
+    const skyMat = createSkyMaterial();
+    const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+    scene.add(skyMesh);
+    skyMatRef.current = skyMat;
 
     // Realistic Depth-Mapped Star Catalog & Interstellar Celestial Field
     const { starGroup, updateStarfield } = createRealisticStarField(scene);
@@ -738,7 +747,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     );
 
     // 2c. Photorealistic 3D Moon Object in Space
-    const moonGeo = new THREE.SphereGeometry(18.0, 48, 48); // Prominent 3D lunar sphere
+    const moonGeo = new THREE.SphereGeometry(18.0, 256, 256); // High-res lunar sphere for procedural limb (Baily's Beads)
     const fallbackMoon = generateFallbackMoonTexture();
     const moonMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -990,7 +999,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
 
       // Animate active Orbital HUD reticle & cloud rotation
       const time = Date.now() * 0.003;
-      updateStarfieldRef.current?.(time);
+      const currentSkyPhase = skyMatRef.current ? skyMatRef.current.uniforms.eclipsePhase.value : 0.0;
+      updateStarfieldRef.current?.(time, sunMeshRef.current?.position, currentSkyPhase);
 
       if (cloudsMeshRef.current && show3DClouds) {
         cloudsMeshRef.current.rotation.y += 0.00015;
@@ -1093,7 +1103,18 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         sunMeshRef.current.visible = show3DSun;
       }
 
+      // Update Sky Dome (Atmospheric Scattering)
+      if (skyMatRef.current) {
+        skyMatRef.current.uniforms.sunPosition.value.set(...sun3DPos);
+      }
+
       const umbraPos = getUmbraPosition(currentTimestamp);
+      if (skyMatRef.current) {
+        // Smoothly interpolate eclipse phase for sky darkening
+        const targetPhase = umbraPos ? 1.0 : 0.0;
+        const currentPhase = skyMatRef.current.uniforms.eclipsePhase.value;
+        skyMatRef.current.uniforms.eclipsePhase.value = THREE.MathUtils.lerp(currentPhase, targetPhase, 0.05);
+      }
       if (umbraPos) {
         const uVec = latLonToVector3(umbraPos.lat, umbraPos.lon, 1);
         earthMeshRef.current.material.uniforms.u_umbra_pos.value.set(...uVec);
