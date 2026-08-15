@@ -180,6 +180,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   const moonMeshRef = useRef<THREE.Mesh | null>(null);
   const sunMeshRef = useRef<THREE.Mesh | null>(null);
   const coronaMeshRef = useRef<THREE.Mesh | null>(null);
+  const sunInnerCoronaRef = useRef<THREE.Mesh | null>(null);
+  const sunOuterCoronaRef = useRef<THREE.Mesh | null>(null);
   const shadowConesGroupRef = useRef<THREE.Group | null>(null);
   const pathLineRef = useRef<THREE.Line | null>(null);
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -356,37 +358,108 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     return texture;
   }, []);
 
-  // Generate fallback 3D Sun Photosphere plasma surface texture
+  // Generate photorealistic fallback 3D Sun Photosphere surface texture
   const generateFallbackSunTexture = useCallback(() => {
+    const W = 2048, H = 1024;
     const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 512;
+    canvas.width = W;
+    canvas.height = H;
     const ctx = canvas.getContext('2d')!;
 
-    // Golden-white solar plasma base
-    const grad = ctx.createLinearGradient(0, 0, 0, 512);
-    grad.addColorStop(0, '#fef08a');
-    grad.addColorStop(0.5, '#f59e0b');
-    grad.addColorStop(1, '#ea580c');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 1024, 512);
+    // 1. Base photosphere gradient: white-gold core → amber → deep orange edge
+    const baseGrad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.min(W, H) * 0.65);
+    baseGrad.addColorStop(0.00, '#fffef0');
+    baseGrad.addColorStop(0.25, '#fff5c0');
+    baseGrad.addColorStop(0.55, '#fbbf24');
+    baseGrad.addColorStop(0.80, '#f97316');
+    baseGrad.addColorStop(1.00, '#c2410c');
+    ctx.fillStyle = baseGrad;
+    ctx.fillRect(0, 0, W, H);
 
-    // Convective solar granules & sunspots
-    for (let i = 0; i < 3000; i++) {
-      const x = Math.random() * 1024;
-      const y = Math.random() * 512;
-      const r = Math.random() * 3.0 + 0.5;
-      ctx.fillStyle = Math.random() < 0.08 ? 'rgba(124, 45, 18, 0.7)' : 'rgba(255, 255, 255, 0.35)';
+    // 2. Convective granulation cells (small bright polygons with dark lanes)
+    const rng = (seed: number) => {
+      let s = seed;
+      return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return (s >>> 0) / 0xffffffff; };
+    };
+    const r = rng(42);
+    // Granule bright cores
+    for (let i = 0; i < 2800; i++) {
+      const x = r() * W, y = r() * H;
+      const size = r() * 14 + 5;
+      const brightness = Math.floor(r() * 30 + 225);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, size);
+      g.addColorStop(0, `rgba(${brightness}, ${Math.floor(brightness * 0.9)}, ${Math.floor(brightness * 0.6)}, 0.28)`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.arc(x, y, size, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Granule dark intergranular lanes
+    for (let i = 0; i < 1400; i++) {
+      const x = r() * W, y = r() * H;
+      ctx.fillStyle = 'rgba(80, 30, 0, 0.10)';
+      ctx.fillRect(x - 1.5, y - r() * 20, 2.5, r() * 20 + 4);
+    }
+
+    // 3. Sunspot groups — umbra (near-black core) + penumbra (dark filament ring)
+    const spots = [
+      { cx: W * 0.38, cy: H * 0.44, ru: 18, rp: 42 },
+      { cx: W * 0.42, cy: H * 0.42, ru: 12, rp: 28 },
+      { cx: W * 0.65, cy: H * 0.53, ru: 22, rp: 50 },
+      { cx: W * 0.68, cy: H * 0.50, ru: 14, rp: 34 },
+      { cx: W * 0.23, cy: H * 0.57, ru: 16, rp: 36 },
+      { cx: W * 0.55, cy: H * 0.38, ru: 10, rp: 24 },
+    ];
+    spots.forEach(({ cx, cy, ru, rp }) => {
+      // Penumbra filament ring (dark radial fibrils)
+      const pg = ctx.createRadialGradient(cx, cy, ru, cx, cy, rp * 1.1);
+      pg.addColorStop(0,   'rgba(60, 25, 5, 0.82)');
+      pg.addColorStop(0.6, 'rgba(100, 50, 15, 0.60)');
+      pg.addColorStop(1,   'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rp * 1.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Umbra (pitch-black magnetic flux core)
+      const ug = ctx.createRadialGradient(cx, cy, 0, cx, cy, ru);
+      ug.addColorStop(0,   'rgba(8, 4, 2, 0.98)');
+      ug.addColorStop(0.7, 'rgba(25, 10, 4, 0.90)');
+      ug.addColorStop(1,   'rgba(60, 25, 5, 0.50)');
+      ctx.fillStyle = ug;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ru, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // 4. Faculae — bright patches flanking sunspots and near limb
+    for (let i = 0; i < 120; i++) {
+      const x = r() * W, y = r() * H;
+      const sz = r() * 30 + 10;
+      const fg = ctx.createRadialGradient(x, y, 0, x, y, sz);
+      fg.addColorStop(0, 'rgba(255, 255, 220, 0.18)');
+      fg.addColorStop(1, 'rgba(255, 255, 220, 0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.arc(x, y, sz, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5. Limb darkening overlay — radial darkening toward the equatorial edges
+    const ldGrad = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.55);
+    ldGrad.addColorStop(0,   'rgba(0, 0, 0, 0)');
+    ldGrad.addColorStop(0.6, 'rgba(0, 0, 0, 0.08)');
+    ldGrad.addColorStop(1,   'rgba(20, 8, 0, 0.45)');
+    ctx.fillStyle = ldGrad;
+    ctx.fillRect(0, 0, W, H);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
     return texture;
   }, []);
+
 
   // Generate 2D Radial Solar Corona Sprite Texture (Camera-Facing Flare Aura)
   const generateSolarCoronaSpriteTexture = useCallback(() => {
@@ -684,8 +757,9 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
     );
 
-    // 2d. Photorealistic 3D Sun Globe & Camera-Facing Solar Corona Atmosphere
-    const sunGeo = new THREE.SphereGeometry(65.0, 48, 48); // 3D Sun Globe sphere
+    // 2d. Photorealistic 3D Sun Globe — enlarged, high-tessellation sphere
+    const SUN_R = 72.0; // Solar radius in scene units
+    const sunGeo = new THREE.SphereGeometry(SUN_R, 96, 96);
     const fallbackSun = generateFallbackSunTexture();
     const sunMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -704,23 +778,62 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = maxAniso;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
         sunMat.uniforms.u_sun_texture.value = tex;
         sunMat.needsUpdate = true;
       }
     );
 
-    // Camera-Facing Volumetric Solar Corona Sprite (Guarantees NO black hole ring or crescent glitch!)
+    // 2d-ii. Inner Corona (chromosphere / transition region) — 1.18× Sun radius
+    const innerCoronaGeo = new THREE.SphereGeometry(SUN_R * 1.18, 64, 64);
+    const innerCoronaMat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_time: { value: 0.0 },
+        u_corona_radius: { value: 0.0 }   // 0 = inner
+      },
+      vertexShader: SUN_CORONA_VERTEX_SHADER,
+      fragmentShader: SUN_CORONA_FRAGMENT_SHADER,
+      side: THREE.BackSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const innerCorona = new THREE.Mesh(innerCoronaGeo, innerCoronaMat);
+    sunMesh.add(innerCorona);
+    sunInnerCoronaRef.current = innerCorona;
+    coronaMeshRef.current = innerCorona;  // backward compat
+
+    // 2d-iii. Outer Corona (K-corona + F-corona) — 2.4× Sun radius
+    const outerCoronaGeo = new THREE.SphereGeometry(SUN_R * 2.4, 64, 64);
+    const outerCoronaMat = new THREE.ShaderMaterial({
+      uniforms: {
+        u_time: { value: 0.0 },
+        u_corona_radius: { value: 1.0 }   // 1 = outer
+      },
+      vertexShader: SUN_CORONA_VERTEX_SHADER,
+      fragmentShader: SUN_CORONA_FRAGMENT_SHADER,
+      side: THREE.BackSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const outerCorona = new THREE.Mesh(outerCoronaGeo, outerCoronaMat);
+    sunMesh.add(outerCorona);
+    sunOuterCoronaRef.current = outerCorona;
+
+    // 2d-iv. Soft radial sprite halo (far-field glow, kept for atmosphere integration)
     const coronaTexture = generateSolarCoronaSpriteTexture();
     const coronaSpriteMat = new THREE.SpriteMaterial({
       map: coronaTexture,
       transparent: true,
       blending: THREE.AdditiveBlending,
-      depthWrite: false
+      depthWrite: false,
+      opacity: 0.55
     });
     const coronaSprite = new THREE.Sprite(coronaSpriteMat);
-    coronaSprite.scale.set(260.0, 260.0, 1.0);
+    coronaSprite.scale.set(420.0, 420.0, 1.0);
     sunMesh.add(coronaSprite);
-    coronaMeshRef.current = coronaSprite as any;
 
     // 2e. 3D Volumetric Umbral & Penumbral Shadow Cones Group
     const shadowConesGroup = new THREE.Group();
@@ -801,9 +914,26 @@ export const Earth3D: React.FC<Earth3DProps> = ({
       }
 
       if (sunMeshRef.current) {
-        sunMeshRef.current.rotation.y += 0.0008; // Rotate 3D Sun photosphere
+        // Solar differential rotation (equatorial ~26 days, polar ~34 days — we simulate avg)
+        sunMeshRef.current.rotation.y += 0.00065;
+        // Subtle 7.25° solar axial tilt oscillation
+        sunMeshRef.current.rotation.x = Math.sin(time * 0.008) * 0.0035;
+
+        const sunTime = Date.now() * 0.001;
+
+        // Update photosphere shader time
         if (sunMeshRef.current.material instanceof THREE.ShaderMaterial) {
-          sunMeshRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+          sunMeshRef.current.material.uniforms.u_time.value = sunTime;
+        }
+
+        // Update inner corona shader time
+        if (sunInnerCoronaRef.current?.material instanceof THREE.ShaderMaterial) {
+          sunInnerCoronaRef.current.material.uniforms.u_time.value = sunTime;
+        }
+
+        // Update outer corona shader time
+        if (sunOuterCoronaRef.current?.material instanceof THREE.ShaderMaterial) {
+          sunOuterCoronaRef.current.material.uniforms.u_time.value = sunTime;
         }
       }
 
