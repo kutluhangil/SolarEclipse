@@ -1,22 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Volume2, VolumeX } from 'lucide-react';
+import { Bot, CalendarPlus, Camera, Leaf, Video, Volume2, VolumeX } from 'lucide-react';
 import { DEFAULT_START_SECONDS, OBSERVATION_STATIONS, SIMULATION_END_SECONDS, SIMULATION_START_SECONDS } from './data/eclipseData';
 import { LatLon, ObservationStation, TelemetryReadout } from './types';
-import { calculateCustomEclipseTimes, calculateDistanceKm, calculateTelemetry, getAutoTrackingStation, getUmbraPosition } from './utils/astronomy';
+import { calculateCustomEclipseTimes, calculateDistanceKm, calculateTelemetry, getAutoTrackingStation, getUmbraPosition, parseTimeToSeconds } from './utils/astronomy';
 import { getAudioEngine } from './utils/audioEngine';
 import { fetchOpenMeteoForecast } from './utils/weatherApi';
+import { downloadEclipseCalendar } from './utils/calendarExport';
 import { AttributionModal } from './components/AttributionModal';
+import { DiamondRingEffect } from './components/DiamondRingEffect';
 import { Earth3D } from './components/Earth3D';
 import { EclipsePlannerModal } from './components/EclipsePlannerModal';
 import { HeaderClocks } from './components/HeaderClocks';
+import { NatureBehaviorPanel } from './components/NatureBehaviorPanel';
 import { ObservationCertificateModal } from './components/ObservationCertificateModal';
 import { PathTimelinePanel } from './components/PathTimelinePanel';
 import { PhotographyGuideModal } from './components/PhotographyGuideModal';
+import { ShadowBandsEffect } from './components/ShadowBandsEffect';
 import { SkyViewPanel } from './components/SkyViewPanel';
 import SolarOracleChat from './components/SolarOracleChat';
 import { TelemetryPanel } from './components/TelemetryPanel';
 import { TimelineScrubber } from './components/TimelineScrubber';
 import { TotalityViewfinderModal } from './components/TotalityViewfinderModal';
+import { VideoRecorder } from './components/VideoRecorder';
 
 export default function App() {
   // Simulation State
@@ -46,7 +51,7 @@ export default function App() {
   // Selection & Camera State
   const [selectedStation, setSelectedStation] = useState<ObservationStation | null>(() => getAutoTrackingStation(DEFAULT_START_SECONDS));
   const [customStation, setCustomStation] = useState<ObservationStation | null>(null);
-  const [cameraMode, setCameraMode] = useState<'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar'>('follow-shadow');
+  const [cameraMode, setCameraMode] = useState<'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar' | 'iss' | 'concorde' | 'lunar-surface'>('follow-shadow');
   const [trackingMode, setTrackingMode] = useState<'auto' | 'manual' | 'spain-fixed'>('auto');
   const [cameraResetTrigger, setCameraResetTrigger] = useState<number>(0);
 
@@ -59,6 +64,14 @@ export default function App() {
   // Mobile Bottom Drawer State
   const [mobileTab, setMobileTab] = useState<'telemetry' | 'sky' | 'timeline'>('telemetry');
   const [isMobilePanelExpanded, setIsMobilePanelExpanded] = useState<boolean>(true);
+
+  // New Feature UI State
+  const [showNaturePanel, setShowNaturePanel] = useState<boolean>(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState<boolean>(false);
+
+  // Renderer canvas ref for VideoRecorder
+  const rendererCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const globeCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Continuous Simulation loop ticker with loop-to-start
   useEffect(() => {
@@ -104,6 +117,37 @@ export default function App() {
       };
     }
     return calculateTelemetry(activeStation.coords, currentTimestamp, activeStation.isCustom ? undefined : activeStation.id);
+  }, [activeStation, currentTimestamp]);
+
+  // Diamond Ring & Shadow Bands triggers (based on C2/C3 times of active station)
+  const { diamondRingState, shadowBandsState } = useMemo(() => {
+    if (!activeStation) return { diamondRingState: null, shadowBandsState: null };
+    const c2s = parseTimeToSeconds(activeStation.eclipseTimes.startTotality);
+    const c3s = parseTimeToSeconds(activeStation.eclipseTimes.endTotality);
+    const DIAMOND_WINDOW = 8;  // ±8s around contact
+    const SHADOW_WINDOW  = 40; // ±40s around contact
+
+    // Diamond Ring
+    const nearC2 = Math.abs(currentTimestamp - c2s) <= DIAMOND_WINDOW;
+    const nearC3 = Math.abs(currentTimestamp - c3s) <= DIAMOND_WINDOW;
+    let diamondRingState = null;
+    if (nearC2) {
+      diamondRingState = { contact: 'c2' as const, progress: (currentTimestamp - (c2s - DIAMOND_WINDOW)) / (DIAMOND_WINDOW * 2) };
+    } else if (nearC3) {
+      diamondRingState = { contact: 'c3' as const, progress: (currentTimestamp - (c3s - DIAMOND_WINDOW)) / (DIAMOND_WINDOW * 2) };
+    }
+
+    // Shadow Bands
+    const nearC2sb = Math.abs(currentTimestamp - c2s) <= SHADOW_WINDOW;
+    const nearC3sb = Math.abs(currentTimestamp - c3s) <= SHADOW_WINDOW;
+    let shadowBandsState = null;
+    if (nearC2sb) {
+      shadowBandsState = { progress: (currentTimestamp - (c2s - SHADOW_WINDOW)) / (SHADOW_WINDOW * 2) };
+    } else if (nearC3sb) {
+      shadowBandsState = { progress: (currentTimestamp - (c3s - SHADOW_WINDOW)) / (SHADOW_WINDOW * 2) };
+    }
+
+    return { diamondRingState, shadowBandsState };
   }, [activeStation, currentTimestamp]);
 
   // Handle custom pin drop on 3D Globe
@@ -380,7 +424,7 @@ export default function App() {
             showDayNightTerminator={showDayNightTerminator}
             umbraOpacity={umbraOpacity}
             onCameraModeChange={(mode) => {
-              setCameraMode(mode);
+              setCameraMode(mode as any);
               if (mode === 'free' || mode === 'focused-station' || mode === 'top-down' || mode === 'polar') {
                 setTrackingMode('manual');
               } else if (mode === 'follow-shadow') {
@@ -395,8 +439,27 @@ export default function App() {
             onToggleTerminator={() => setShowDayNightTerminator(!showDayNightTerminator)}
             cameraResetTrigger={cameraResetTrigger}
             onUserInteract={handleUserInteract}
+            onRendererReady={(canvas) => { rendererCanvasRef.current = canvas; globeCanvasRef.current = canvas; }}
           />
         </div>
+
+        {/* Diamond Ring & Baily's Beads — full-screen canvas overlay near C2/C3 */}
+        {diamondRingState && (
+          <DiamondRingEffect
+            isActive
+            contact={diamondRingState.contact}
+            progress={Math.min(1, Math.max(0, diamondRingState.progress))}
+          />
+        )}
+
+        {/* Shadow Bands — animated ground-pattern near C2/C3 */}
+        {shadowBandsState && (
+          <ShadowBandsEffect
+            isActive
+            progress={Math.min(1, Math.max(0, shadowBandsState.progress))}
+            sunAzimuth={180}
+          />
+        )}
 
         {/* Floating Overlay Panels */}
         <div className="absolute inset-0 pointer-events-none flex justify-between p-4 sm:p-5 lg:p-6 z-20 overflow-hidden transition-opacity duration-300">
@@ -430,6 +493,16 @@ export default function App() {
               selectedStation={activeStation}
               telemetry={telemetry}
               currentTimestamp={currentTimestamp}
+            />
+            {/* Nature Behavior Panel */}
+            <NatureBehaviorPanel
+              telemetry={telemetry}
+              isVisible={showNaturePanel}
+            />
+            {/* Video Recorder */}
+            <VideoRecorder
+              canvasRef={globeCanvasRef}
+              isVisible={showVideoRecorder}
             />
           </div>
         </div>
@@ -609,8 +682,51 @@ export default function App() {
         />
       )}
 
-      {/* 6. Floating Action Buttons (AI Oracle + Sound) — bottom right */}
+      {/* 6. Floating Action Buttons — bottom right */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 items-end">
+        {/* Calendar Export */}
+        {activeStation && (
+          <button
+            id="btn-calendar-export"
+            onClick={() => downloadEclipseCalendar(activeStation)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-bold tracking-wider uppercase border transition-all shadow-lg bg-[#050505]/90 hover:bg-purple-500/15 text-slate-400 hover:text-purple-300 border-white/15 hover:border-purple-500/40"
+            title="Download eclipse contact times as .ics calendar file"
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Calendar</span>
+          </button>
+        )}
+
+        {/* Nature Panel Toggle */}
+        <button
+          id="btn-nature-panel"
+          onClick={() => setShowNaturePanel(p => !p)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-bold tracking-wider uppercase border transition-all shadow-lg ${
+            showNaturePanel
+              ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/60'
+              : 'bg-[#050505]/90 hover:bg-emerald-500/15 text-slate-400 hover:text-emerald-300 border-white/15 hover:border-emerald-500/40'
+          }`}
+          title="Toggle nature & wildlife behavior panel"
+        >
+          <Leaf className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Nature</span>
+        </button>
+
+        {/* Video Recorder Toggle */}
+        <button
+          id="btn-video-recorder"
+          onClick={() => setShowVideoRecorder(p => !p)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-bold tracking-wider uppercase border transition-all shadow-lg ${
+            showVideoRecorder
+              ? 'bg-red-500/25 text-red-200 border-red-400/60'
+              : 'bg-[#050505]/90 hover:bg-red-500/15 text-slate-400 hover:text-red-300 border-white/15 hover:border-red-500/40'
+          }`}
+          title="Record a 30-second video clip of the simulation"
+        >
+          <Video className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Record</span>
+        </button>
+
         {/* Sound Toggle */}
         <button
           id="btn-sound-toggle"

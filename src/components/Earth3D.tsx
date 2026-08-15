@@ -29,13 +29,13 @@ interface Earth3DProps {
   currentTimestamp: number;
   selectedStation: ObservationStation | null;
   onSelectStation: (station: ObservationStation) => void;
-  cameraMode: 'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar';
+  cameraMode: 'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar' | 'iss' | 'concorde' | 'lunar-surface';
   showPathLine: boolean;
   showPenumbra: boolean;
   showDayNightTerminator: boolean;
   showCelestialIcons?: boolean;
   umbraOpacity?: number;
-  onCameraModeChange: (mode: 'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar') => void;
+  onCameraModeChange: (mode: 'free' | 'follow-shadow' | 'focused-station' | 'top-down' | 'spain-fixed' | 'polar' | 'iss' | 'concorde' | 'lunar-surface') => void;
   onDropCustomPin: (coords: LatLon) => void;
   onTogglePathLine?: () => void;
   onTogglePenumbra?: () => void;
@@ -43,6 +43,8 @@ interface Earth3DProps {
   onToggleCelestialIcons?: () => void;
   cameraResetTrigger?: number;
   onUserInteract?: () => void;
+  /** Callback that exposes the renderer canvas for external recorders */
+  onRendererReady?: (canvas: HTMLCanvasElement) => void;
 }
 
 const EARTH_RADIUS = 100;
@@ -188,6 +190,7 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
   const stationMarkersRef = useRef<THREE.Group | null>(null);
   const celestialIconsRef = useRef<THREE.Group | null>(null);
+  const auroraRef = useRef<THREE.Mesh | null>(null);
 
   // Raycaster for click interaction
   const raycasterRef = useRef(new THREE.Raycaster());
@@ -559,6 +562,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     renderer.toneMappingExposure = 1.35;
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+    // Expose canvas to parent for external recording
+    if (onRendererReady) onRendererReady(renderer.domElement);
 
     // Orbit Controls
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -840,6 +845,84 @@ export const Earth3D: React.FC<Earth3DProps> = ({
     scene.add(shadowConesGroup);
     shadowConesGroupRef.current = shadowConesGroup;
 
+    // 2f. Aurora Borealis — animated shader ring at 60–72° N latitude band
+    // Rendered as a transparent partial sphere cap using BackSide ShaderMaterial
+    const auroraGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.012, 96, 48, 0, Math.PI * 2, 0, Math.PI * 0.35);
+    const auroraMat = new THREE.ShaderMaterial({
+      uniforms: { u_time: { value: 0.0 }, u_intensity: { value: 0.0 } },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vPos;
+        void main() {
+          vUv = uv;
+          vPos = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float u_time;
+        uniform float u_intensity;
+        varying vec2 vUv;
+        varying vec3 vPos;
+
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        float noise(vec2 p) {
+          vec2 i = floor(p); vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1,0)), u.x),
+                     mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+        }
+        float fbm(vec2 p) {
+          float v = 0.0, a = 0.5;
+          for (int i = 0; i < 4; i++) { v += a * noise(p); a *= 0.5; p *= 2.1; }
+          return v;
+        }
+
+        void main() {
+          // Only render the northern polar cap (top ~35% of sphere = y > 0.6)
+          float yNorm = (vPos.y / 101.2 + 1.0) * 0.5;
+          if (yNorm < 0.60) discard;
+
+          // Vertical bands — aurora curtains
+          float lon = atan(vPos.z, vPos.x);
+          float lat = yNorm;
+
+          float t = u_time * 0.4;
+          float curtain = fbm(vec2(lon * 3.5 + t * 0.25, lat * 8.0 + t * 0.15));
+          curtain = pow(curtain, 1.6);
+
+          // Aurora color: green dominant, teal edges, magenta tops
+          float greenBand = smoothstep(0.60, 0.70, lat) * (1.0 - smoothstep(0.72, 0.82, lat));
+          float magentaBand = smoothstep(0.72, 0.80, lat) * (1.0 - smoothstep(0.85, 0.95, lat));
+
+          vec3 green   = vec3(0.05, 0.95, 0.35);
+          vec3 teal    = vec3(0.05, 0.80, 0.75);
+          vec3 magenta = vec3(0.80, 0.15, 0.80);
+
+          vec3 col = mix(teal, green, greenBand) + magenta * magentaBand * 0.6;
+          col *= curtain;
+
+          float alpha = curtain * u_intensity * mix(0.0, 0.75, greenBand + magentaBand * 0.5);
+          alpha = clamp(alpha, 0.0, 0.72);
+
+          gl_FragColor = vec4(col, alpha);
+        }
+      `,
+      side: THREE.BackSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    // Tilt aurora cap toward north pole
+    const auroraMesh = new THREE.Mesh(auroraGeo, auroraMat);
+    auroraMesh.rotation.x = -Math.PI / 2; // flip to north pole
+    scene.add(auroraMesh);
+    auroraRef.current = auroraMesh;
+    auroraMesh.visible = false; // only shown at high-latitude stations
+
+
     // 3. Path of Totality Line (Semantic Solar Gold / Amber accent line)
     // Sample the 3D Geodesic Slerp astronomical trajectory every 15 seconds for a mathematically pristine curve on the sphere
     const curvePoints: THREE.Vector3[] = [];
@@ -946,7 +1029,21 @@ export const Earth3D: React.FC<Earth3DProps> = ({
         });
       }
 
+      // Aurora Borealis animation — active at Greenland/Iceland (lat > 60°)
+      if (auroraRef.current && auroraRef.current.material instanceof THREE.ShaderMaterial) {
+        auroraRef.current.material.uniforms.u_time.value = Date.now() * 0.001;
+        // Intensity driven by the camera's current focus latitude
+        const camLat = Math.asin(camera.position.clone().normalize().y) * (180 / Math.PI);
+        const targetIntensity = camLat > 58 ? 0.85 : camLat > 45 ? 0.35 : 0.0;
+        const currentIntensity = auroraRef.current.material.uniforms.u_intensity.value;
+        auroraRef.current.material.uniforms.u_intensity.value = THREE.MathUtils.lerp(
+          currentIntensity, targetIntensity, 0.008
+        );
+        auroraRef.current.visible = auroraRef.current.material.uniforms.u_intensity.value > 0.01;
+      }
+
       controls.update();
+
       renderer.render(scene, camera);
     };
     animate();
@@ -1274,16 +1371,49 @@ export const Earth3D: React.FC<Earth3DProps> = ({
           controlsRef.current.target.set(0, 0, 0);
         }
       } else if (cameraMode === 'top-down' || cameraMode === 'polar') {
-        // High-altitude North Pole top-down perspective
-        // Centered directly on 89.8° N, -20.0° W to visualize the shadow trajectory across the Arctic region
         const camPos = latLonToVector3(89.8, -20.0, targetDist * 1.08);
         targetCamPosRef.current = new THREE.Vector3(...camPos);
         controlsRef.current.target.set(0, 0, 0);
       } else if (cameraMode === 'spain-fixed') {
-        // Fixed center on Spain (Lat 40.8° N, Lon -2.5° W) zoomed out so the entire Earth globe is clearly visible
         const camPos = latLonToVector3(40.8, -2.5, targetDist);
         targetCamPosRef.current = new THREE.Vector3(...camPos);
         controlsRef.current.target.set(0, 0, 0);
+
+      // ── New cinematic camera modes ─────────────────────────────────────
+      } else if (cameraMode === 'iss') {
+        // ISS Low-Earth Orbit: 400 km altitude (~EARTH_RADIUS + 4 scene units at 1:1 scale)
+        // Orbit completes every 92 minutes → slow scene orbit period
+        const issOrbitPeriod = 55; // scene-seconds per orbit (sped up for drama)
+        const issAngle = (currentTimestamp / issOrbitPeriod) * Math.PI * 2;
+        const issAlt = EARTH_RADIUS + 8; // ~8 scene units above Earth surface
+        const issLat = 51.6; // ISS orbital inclination in degrees
+        const issPos = latLonToVector3(
+          issLat * Math.cos(issAngle * 0.3),
+          (issAngle * 180 / Math.PI) % 360,
+          issAlt
+        );
+        targetCamPosRef.current = new THREE.Vector3(...issPos);
+        controlsRef.current.target.set(0, 0, 0);
+
+      } else if (cameraMode === 'concorde') {
+        // Sinematic Concorde: chases umbra at Mach 2 from 18 km altitude
+        // Camera locked to umbra center, slightly above and behind the shadow
+        if (umbraPos) {
+          const conc = latLonToVector3(umbraPos.lat + 2.5, umbraPos.lon - 3.0, EARTH_RADIUS + 5);
+          targetCamPosRef.current = new THREE.Vector3(...conc);
+          controlsRef.current.target.set(0, 0, 0);
+        }
+
+      } else if (cameraMode === 'lunar-surface') {
+        // Camera placed at Moon's position, looking toward Earth
+        if (moonMeshRef.current) {
+          const moonPos = moonMeshRef.current.position.clone();
+          // Step back slightly from Moon center toward Earth
+          const toEarth = new THREE.Vector3(0, 0, 0).sub(moonPos).normalize();
+          const lunarCamPos = moonPos.clone().add(toEarth.multiplyScalar(6));
+          targetCamPosRef.current = lunarCamPos;
+          controlsRef.current.target.set(0, 0, 0);
+        }
       }
     }
   }, [currentTimestamp, selectedStation, cameraMode, cameraResetTrigger, showPathLine, showPenumbra, showDayNightTerminator, showCelestialIcons, umbraOpacity, showIndigoFilter, showStarCatalog]);
