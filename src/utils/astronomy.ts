@@ -1,6 +1,6 @@
 import { LatLon, TelemetryReadout, CountryTimeInfo, ObservationStation, LiveMeteorology } from '../types';
 import { UMBRA_PATH_WAYPOINTS, COUNTRY_TIMEZONE_CONFIG, OBSERVATION_STATIONS } from '../data/eclipseData';
-import { Astronomy, Observer, MakeTime } from 'astronomy-engine';
+import { Observer, MakeTime, Equator, SiderealTime, Horizon, Body } from 'astronomy-engine';
 
 /**
  * Calculate dynamic live meteorological conditions and temperature drop projections
@@ -283,13 +283,13 @@ export function getSubSolarPoint(timeSeconds: number): LatLon {
   const time = MakeTime(date);
   
   // Get Sun's geocentric equatorial coordinates using VSOP87
-  const sunEqu = Astronomy.Equator('Sun', time, undefined, true, true);
+  const sunEqu = Equator(Body.Sun, time, undefined, true, true);
   
   // Declination is simply the latitude of the sub-solar point
   const lat = sunEqu.dec;
   
   // For longitude, we subtract Greenwich Mean Sidereal Time (GMST) from Right Ascension
-  const gmst = Astronomy.SiderealTime(time); // in hours
+  const gmst = SiderealTime(time); // in hours
   let lon = sunEqu.ra * 15 - gmst * 15;
   
   // Normalize longitude to -180..180
@@ -307,9 +307,11 @@ export function calculateSunAltitude(coords: LatLon, timeSeconds: number): numbe
   const date = new Date(Date.UTC(2026, 7, 12, 0, 0, timeSeconds));
   const time = MakeTime(date);
   const observer = new Observer(coords.lat, coords.lon, 0); // Elevation 0m
+  // Get Sun's equatorial coordinates first
+  const sunEqu = Equator(Body.Sun, time, observer, true, true);
   
   // Calculate apparent horizontal coordinates (includes atmospheric refraction)
-  const hor = Astronomy.Horizon(time, observer, 'Sun', 'normal');
+  const hor = Horizon(time, observer, sunEqu.ra, sunEqu.dec, 'normal');
   return Math.round(hor.altitude * 10) / 10;
 }
 

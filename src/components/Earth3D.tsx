@@ -168,7 +168,8 @@ export const Earth3D: React.FC<Earth3DProps> = ({
   onToggleTerminator,
   onToggleCelestialIcons,
   cameraResetTrigger = 0,
-  onUserInteract
+  onUserInteract,
+  onRendererReady
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
