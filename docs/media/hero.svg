@@ -3,9 +3,9 @@
 .bg{animation:bg 12s linear infinite}
 @keyframes bg{0%,8%{fill:#fbeedd}28%{fill:#6a2f1d}48%,80%{fill:#060407}90%,100%{fill:#fbeedd}}
 .ink{animation:ink 12s linear infinite}
-@keyframes ink{0%,8%{fill:#2a1610}28%{fill:#fff0e4}48%,80%{fill:#ffeede}90%,100%{fill:#2a1610}}
+@keyframes ink{0%,17.5%{fill:#2a1610}18.5%,28%{fill:#fff0e4}48%,84.5%{fill:#ffeede}85.5%,100%{fill:#2a1610}}
 .rule{animation:rule 12s linear infinite}
-@keyframes rule{0%,8%{stroke:#2a161033}28%{stroke:#fff0e433}48%,80%{stroke:#ffeede33}90%,100%{stroke:#2a161033}}
+@keyframes rule{0%,17.5%{stroke:#2a161033}18.5%,28%{stroke:#fff0e433}48%,84.5%{stroke:#ffeede33}85.5%,100%{stroke:#2a161033}}
 .muted{opacity:.74}
 .stars{animation:stars 12s linear infinite}
 @keyframes stars{0%,8%{opacity:0}28%{opacity:.2}48%,80%{opacity:.85}90%,100%{opacity:0}}
